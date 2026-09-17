@@ -2149,8 +2149,8 @@
         function showSitePopup(feature) {
             if (!feature) return;
             const {
-                site_id, label, category, color_key, in_danger, region, states, iso_codes,
-                date_inscribed, criteria, area_hectares, short_description, component_count,
+                site_id, label, category, color_key, in_danger, states,
+                date_inscribed, area_hectares, short_description,
                 unesco_url, image_url, extra_image_urls, image_author, image_copyright,
                 image_caption, image_source,
                 wiki_title, wiki_project, wiki_url, wikidata_url, popularity
@@ -2203,19 +2203,9 @@
             const statesHtml = hasDisplayValue(states)
                 ? `<span style="color:rgba(255,255,255,0.78)">${escapeHtml(String(states))}</span><br>`
                 : '';
-            const regionHtml = hasDisplayValue(region)
-                ? `<span style="color:rgba(255,255,255,0.7)">${escapeHtml(String(region))}</span><br>`
-                : '';
-            const criteriaHtml = hasDisplayValue(criteria)
-                ? `<span style="color:rgba(255,255,255,0.7)">Criteria: ${escapeHtml(String(criteria))}</span><br>`
-                : '';
             const areaNumber = Number(area_hectares);
             const areaHtml = Number.isFinite(areaNumber) && areaNumber > 0
                 ? `<span style="color:rgba(255,255,255,0.7)">Area: ${Math.round(areaNumber).toLocaleString()} ha</span><br>`
-                : '';
-            const componentsNumber = Number(component_count);
-            const componentsHtml = Number.isFinite(componentsNumber) && componentsNumber > 1
-                ? `<span style="color:rgba(255,255,255,0.7)">Serial property: ${componentsNumber.toLocaleString()} components</span><br>`
                 : '';
             const descriptionText = hasDisplayValue(short_description) ? stripTags(short_description) : '';
             const infoButtonHtml = descriptionText
@@ -2249,10 +2239,7 @@
                         <span style="color:${color}; font-weight:bold">&#9679; ${escapeHtml(categoryLabel[color_key] || category || 'Unknown category')}</span>${date_inscribed ? ` <span style="color:rgba(255,255,255,0.5)">(inscribed ${escapeHtml(String(date_inscribed))})</span>` : ''}<br>
                         ${in_danger && color_key === 'Danger' && category ? `<span style="color:rgba(255,255,255,0.78)">${escapeHtml(String(category))} property</span><br>` : ''}
                         ${statesHtml}
-                        ${regionHtml}
-                        ${criteriaHtml}
                         ${areaHtml}
-                        ${componentsHtml}
                         <span style="color:rgba(255,255,255,0.6); font-size:11px">Wikipedia views/yr: ${formattedPopularity}</span>
                         ${imageSourceHtml}
                     </div>

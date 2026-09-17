@@ -278,7 +278,7 @@ Labels use `short_label` when present and wrap at `text-max-width: 8` ems, so a 
 
 Both are composed with the other controls rather than overriding them, so a search narrows whatever category, danger and region selection is already active.
 
-**Popup — a two-sided card.** The front holds the facts: the photo, the site name linking to its UNESCO record, category and inscription year, states parties, region, inscription criteria, area, component count for serial properties, annual Wikipedia views, and source links to UNESCO, Wikipedia and Wikidata.
+**Popup — a two-sided card.** The front holds the facts, kept deliberately short: the photo, the site name linking to its UNESCO record, category and inscription year, states parties, area, annual Wikipedia views, and source links to UNESCO, Wikipedia and Wikidata. Region, inscription criteria and component count stay in `sites.geojson` — `region` still drives the region filter — but are not printed on the card.
 
 A small circled **i** beside the title flips the card on its vertical axis to reveal the property's full UNESCO description, with a `←` button to flip back. The card's height animates with the rotation so each face is sized to its own content, and a long description scrolls inside the back face rather than stretching the card.
 
