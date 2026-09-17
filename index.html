@@ -462,6 +462,9 @@
             height: 0;
         }
 
+        /* The track is deliberately inert — only the knob moves. Its red is the same
+           red the in-danger dots use on the globe, so the control names its own colour
+           without needing a legend dot beside the label. */
         .toggle-track {
             position: relative;
             flex-shrink: 0;
@@ -470,7 +473,6 @@
             border-radius: 999px;
             background: rgba(255, 255, 255, 0.14);
             border: 1px solid rgba(255, 255, 255, 0.18);
-            transition: background 160ms ease, border-color 160ms ease;
         }
 
         .toggle-knob {
@@ -480,29 +482,17 @@
             width: 10px;
             height: 10px;
             border-radius: 50%;
-            background: rgba(255, 255, 255, 0.75);
-            transition: transform 160ms ease, background 160ms ease;
-        }
-
-        .toggle-input:checked+.toggle-track {
-            background: rgba(255, 77, 94, 0.45);
-            border-color: rgba(255, 77, 94, 0.7);
+            background: #FF4D5E;
+            transition: transform 160ms ease;
         }
 
         .toggle-input:checked+.toggle-track .toggle-knob {
             transform: translateX(14px);
-            background: #FF4D5E;
         }
 
         .toggle-input:focus-visible+.toggle-track {
             outline: 2px solid rgba(255, 255, 255, 0.5);
             outline-offset: 2px;
-        }
-
-        .toggle-label {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
         }
 
         .dot {
@@ -773,9 +763,8 @@
             margin: 0 0 10px;
         }
 
-        /* UNESCO ships a caption for the main photo only. Kept off the card until hover
-           so it never competes with the site's own facts; the full text is also on the
-           image's title attribute, for the few captions too long to fit. */
+        /* UNESCO ships a caption for the main photo only, kept off the card until the
+           pointer is moved over the photo so it never competes with the site's facts. */
         .popup-image-caption {
             position: absolute;
             left: 0;
@@ -790,18 +779,18 @@
             color: rgba(255, 255, 255, 0.92);
             font-size: 10px;
             line-height: 1.45;
-            display: -webkit-box;
-            -webkit-line-clamp: 5;
-            -webkit-box-orient: vertical;
             opacity: 0;
             transition: opacity 170ms ease;
             pointer-events: none;
         }
 
-        /* Hover only. `:focus-within` would pin the caption open for good, since the
-           slide arrows live inside the wrap and keep focus after a click; the caption is
-           also on the image's title attribute, which covers the non-pointer path. */
-        .popup-image-wrap:hover .popup-image-caption {
+        /* Not `:hover`: MapLibre anchors a popup below the clicked point whenever there
+           is room above it, so the photo lands under the cursor and :hover matches the
+           moment the card opens. The class is set on real pointer movement instead, so a
+           stationary cursor never reveals the caption. `:focus-within` is avoided too —
+           the slide arrows live inside the wrap and would pin the caption open after a
+           click. */
+        .popup-image-wrap.show-caption .popup-image-caption {
             opacity: 1;
         }
 
@@ -1078,7 +1067,7 @@
                             <label class="filter-toggle">
                                 <input id="danger-toggle" type="checkbox" class="toggle-input">
                                 <span class="toggle-track"><span class="toggle-knob"></span></span>
-                                <span class="toggle-label"><span class="dot dot-danger"></span> In danger only</span>
+                                In danger
                             </label>
                         </div>
                         <div class="filter-group" data-filter-group="region">
@@ -2195,7 +2184,7 @@
             const hasSlides = slides.length > 0;
             const imageHtml = hasSlides ? `
                 <div class="popup-image-wrap" id="popup-image-wrap">
-                    <img class="popup-species-image" id="popup-slide-img" src="${escapeHtml(slides[0].url)}" alt="${escapeHtml(siteName)}" title="${escapeHtml(slides[0].caption)}" referrerpolicy="no-referrer" loading="lazy">
+                    <img class="popup-species-image" id="popup-slide-img" src="${escapeHtml(slides[0].url)}" alt="${escapeHtml(siteName)}" referrerpolicy="no-referrer" loading="lazy">
                     <span class="popup-image-caption" id="popup-slide-caption"${slides[0].caption ? '' : ' hidden'}>${escapeHtml(slides[0].caption)}</span>
                     ${slides.length > 1 ? `
                         <button class="popup-slide-btn popup-slide-prev">&#8249;</button>
@@ -2331,6 +2320,11 @@
                 img.onload = fitPopupImage;
                 img.onerror = hidePopupImage;
                 if (img.complete && img.naturalWidth) fitPopupImage();
+
+                if (wrap) {
+                    wrap.addEventListener('mousemove', () => wrap.classList.add('show-caption'));
+                    wrap.addEventListener('mouseleave', () => wrap.classList.remove('show-caption'));
+                }
             }
 
             syncFlipHeight();
@@ -2356,7 +2350,6 @@
                     idx = (newIdx + slides.length) % slides.length;
                     const slide = slides[idx];
                     img.src = slide.url;
-                    img.title = slide.caption || '';
                     if (caption) {
                         caption.textContent = slide.caption || '';
                         caption.hidden = !slide.caption;
