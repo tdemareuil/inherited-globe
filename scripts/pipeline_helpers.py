@@ -13,6 +13,7 @@ compute from polygons.
 
 from __future__ import annotations
 
+import html
 import json
 import math
 import re
@@ -69,6 +70,49 @@ UNESCO_REGIONS = [
 # Danger take the "Danger" key instead, so the red dot overrides their category color.
 CATEGORIES = ["Cultural", "Natural", "Mixed"]
 DANGER_COLOR_KEY = "Danger"
+
+# UNESCO Global Geoparks come from a separate programme and a separate export
+# (data/eg0001.csv), so they are not a World Heritage category: they carry their own
+# category and color key, and are never in danger — the Danger list is a World
+# Heritage instrument only.
+GEOPARK_CATEGORY = "Geopark"
+
+# Wikidata's item for the designation itself, used to find the geopark items.
+GEOPARK_DESIGNATION_QID = "Q53444003"
+
+# The geopark export has no region column, but its `Internal ID` is prefixed with the
+# programme region (EUFR10, ASCN01, NACA03...). Canada and New Zealand follow the
+# World Heritage convention of folding into the neighbouring region, so the five
+# regions in the globe's filter stay the same for both datasets.
+GEOPARK_REGION_PREFIXES = {
+    "AF": "Africa",
+    "AR": "Arab States",
+    "AS": "Asia and the Pacific",
+    "OC": "Asia and the Pacific",
+    "EU": "Europe and North America",
+    "NA": "Europe and North America",
+    "LA": "Latin America and the Caribbean",
+}
+
+# The geopark export names countries by ISO 3166-1 alpha-2 code only, where the World
+# Heritage export ships both the codes and the written names. Covers every code the
+# geopark export uses.
+COUNTRY_NAMES = {
+    "AT": "Austria", "BE": "Belgium", "BR": "Brazil", "CA": "Canada",
+    "CL": "Chile", "CN": "China", "CY": "Cyprus", "CZ": "Czechia",
+    "DE": "Germany", "DK": "Denmark", "EC": "Ecuador", "ES": "Spain",
+    "FI": "Finland", "FR": "France", "GB": "United Kingdom", "GR": "Greece",
+    "HR": "Croatia", "HU": "Hungary", "ID": "Indonesia", "IE": "Ireland",
+    "IR": "Iran", "IS": "Iceland", "IT": "Italy", "JP": "Japan",
+    "KP": "North Korea", "KR": "Republic of Korea", "LU": "Luxembourg",
+    "MA": "Morocco", "MX": "Mexico", "MY": "Malaysia", "NI": "Nicaragua",
+    "NL": "Netherlands", "NO": "Norway", "NZ": "New Zealand", "PE": "Peru",
+    "PH": "Philippines", "PL": "Poland", "PT": "Portugal", "RO": "Romania",
+    "RS": "Serbia", "RU": "Russian Federation", "SA": "Saudi Arabia",
+    "SE": "Sweden", "SI": "Slovenia", "SK": "Slovakia", "TH": "Thailand",
+    "TN": "Tunisia", "TR": "Türkiye", "TZ": "United Republic of Tanzania",
+    "UY": "Uruguay", "VN": "Viet Nam",
+}
 
 
 def configure(**kwargs):
@@ -134,14 +178,33 @@ def pick_path(obj, *paths):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def strip_tags(value):
-    """Drop the occasional inline HTML (<em>, <p>, <br>) the UNESCO CMS leaves in text."""
+    """Drop the occasional inline HTML (<em>, <p>, <br>) the UNESCO CMS leaves in text.
+
+    Both exports also leave HTML entities behind — `&amp;` in the World Heritage names,
+    numeric ones such as `&#160;` in the geopark introductions — so the text is unescaped
+    after the tags come out.
+    """
     text = clean_str(value)
     if not text:
         return ""
     text = re.sub(r"<br\s*/?>", " ", text, flags=re.I)
     text = re.sub(r"<[^>]*>", " ", text)
-    text = text.replace("&nbsp;", " ").replace("&amp;", "&")
+    text = html.unescape(text)
     return re.sub(r"\s+", " ", text).strip()
+
+
+# Both exports concatenate a record's paragraphs into one field and lose the space at the
+# join, so a sentence ends flush against the next one: "the Japanese archipelago.At the
+# Date Museum". 226 of the 241 geopark introductions are affected, and one World Heritage
+# description. The guard is the character before the stop: it has to be lowercase, a digit
+# or a closing quote, which leaves initialisms ("U.S.A"), decimals ("1.5") and ellipses
+# alone.
+_GLUED_SENTENCE_RE = re.compile(r'''([a-z0-9)\u201d\u2019"'])([.!?])([A-Z\u201c])''')
+
+
+def description_text(value):
+    """Clean a description or introduction for display: tags out, sentence spacing back."""
+    return _GLUED_SENTENCE_RE.sub(r"\1\2 \3", strip_tags(value))
 
 
 def parse_coordinates(value):
@@ -222,6 +285,43 @@ def unesco_site_url(site_id):
     if not sid.isdigit():
         return None
     return UNESCO_SITE_URL.format(site_id=sid)
+
+
+# Every name in the geopark export ends in the programme's own words. They are worth
+# keeping in the popup title and in what the search box matches, but not on the globe
+# (241 identical tails) and not in a Wikidata search box.
+_GEOPARK_LABEL_SUFFIX = re.compile(
+    r"\s*[-–—,]?\s*(?:UNESCO\s+)?Global\s+Geopark\s*$", re.I)
+
+
+def geopark_plain_name(name):
+    """Strip the trailing 'UNESCO Global Geopark' from a geopark name."""
+    base = strip_tags(name)
+    stripped = _GEOPARK_LABEL_SUFFIX.sub("", base).strip(" ,;:-–—")
+    return stripped or base
+
+
+def geopark_short_label(name, max_chars=42):
+    """On-globe label for a geopark: the name without the programme words, shortened.
+
+    Unlike short_label(), this always returns a string: the programme suffix has to come
+    off every geopark label, so there is never a case where the full name will do.
+    """
+    plain = geopark_plain_name(name)
+    return short_label(plain, max_chars) or plain
+
+
+def geopark_region(internal_id):
+    """Map a geopark `Internal ID` (EUFR10, ASCN01) to its UNESCO programme region."""
+    code = clean_str(internal_id).upper()
+    return GEOPARK_REGION_PREFIXES.get(code[:2])
+
+
+def country_names(iso_codes):
+    """Turn the geopark export's "AT,SI" country codes into "Austria, Slovenia"."""
+    codes = [c.strip().upper() for c in clean_str(iso_codes).split(",") if c.strip()]
+    names = [COUNTRY_NAMES.get(code, code) for code in codes]
+    return ", ".join(dict.fromkeys(names))
 
 
 def category_color_key(category, in_danger):
@@ -734,6 +834,133 @@ def attach_wikidata_fields(frame, mapping, id_col="site_id"):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# 3b. Wikipedia article resolution — UNESCO Global Geoparks
+#
+# There is no geopark equivalent of P757. Wikidata has no UNESCO Global Geopark
+# identifier property at all, and the one historical identifier it does carry,
+# P2467 (Global Geoparks Network ID, former scheme), is on about 130 items, is
+# formatted as "Portugal/6444", and also sits on national geoparks that were never
+# UNESCO-designated — so it cannot be joined onto the export's `Internal ID`.
+#
+# The appropriate field to match on is therefore the name (`Titre EN`). The pass
+# below still goes through Wikidata rather than straight to a text search: it pulls
+# every item marked as a UNESCO Global Geopark — by designation (P1435), by class
+# (P31), or by that former GGN identifier — with all of its labels and aliases, and
+# matches our names against that closed set. Roughly 6 geoparks in 10 resolve this
+# way, with far fewer false positives than an open-ended search. Whatever is left
+# falls through to resolve_sites_by_name(), exactly as the World Heritage list does.
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Words shared by every geopark name, in the languages Wikidata labels them in.
+# Dropping them is what lets "Terres d'Hérault UNESCO Global Geopark" meet the
+# Wikidata label "Géoparc mondial UNESCO des Terres d'Hérault".
+_GEOPARK_NAME_NOISE = re.compile(
+    r"\b(unesco|global|mondial|mundial|geopark|geoparks|geoparque|geoparc|"
+    r"geoparco|geopargo|g[ée]oparc|natural|national)\b"
+)
+
+
+# Articles and prepositions left stranded once the programme words come out:
+# "Géoparc mondial UNESCO des Terres d'Hérault" folds to "des terres d herault",
+# which has to meet "terres d herault".
+_GEOPARK_NAME_STOPWORDS = {
+    "de", "des", "du", "da", "das", "do", "dos", "della", "delle", "del", "dei",
+    "la", "le", "les", "el", "los", "las", "il", "lo", "of", "the", "van", "der",
+    "und", "and", "et", "y", "e",
+}
+
+
+def geopark_name_key(name):
+    """Fold a geopark name to a comparison key, with the programme words removed."""
+    key = fold_for_search(strip_tags(name))
+    key = _GEOPARK_NAME_NOISE.sub(" ", key)
+    tokens = re.sub(r"[^a-z0-9]+", " ", key).split()
+    while tokens and tokens[0] in _GEOPARK_NAME_STOPWORDS:
+        tokens.pop(0)
+    while tokens and tokens[-1] in _GEOPARK_NAME_STOPWORDS:
+        tokens.pop()
+    return " ".join(tokens)
+
+
+def build_geopark_name_query(languages):
+    """SPARQL: every Wikidata item marked a UNESCO Global Geopark, with its names."""
+    langs = ",".join(f'"{lang}"' for lang in languages)
+    return f"""
+SELECT ?item ?name WHERE {{
+  {{ ?item wdt:P1435 wd:{GEOPARK_DESIGNATION_QID} }}
+  UNION {{ ?item wdt:P31 wd:{GEOPARK_DESIGNATION_QID} }}
+  UNION {{ ?item wdt:P2467 ?ggn_id }}
+  {{ ?item rdfs:label ?name }} UNION {{ ?item skos:altLabel ?name }}
+  FILTER(LANG(?name) IN ({langs}))
+}}
+"""
+
+
+def query_geopark_name_index(languages=("en", "fr", "es", "de", "it", "pt", "zh", "ja")):
+    """Return {folded name → QID} for every Wikidata item marked a UNESCO Global Geopark.
+
+    A name that two items answer to is dropped rather than guessed at.
+    """
+    data = _post_sparql(build_geopark_name_query(languages))
+    rows = (data or {}).get("results", {}).get("bindings", [])
+    index, ambiguous = {}, set()
+    for row in rows:
+        qid = row["item"]["value"].rsplit("/", 1)[-1]
+        key = geopark_name_key(row["name"]["value"])
+        if not key:
+            continue
+        if index.get(key, qid) != qid:
+            ambiguous.add(key)
+        index[key] = qid
+    for key in ambiguous:
+        index.pop(key, None)
+    print(f"  [geoparks] {len(set(index.values())):,} Wikidata items, "
+          f"{len(index):,} usable names ({len(ambiguous)} ambiguous dropped)")
+    return index
+
+
+def query_wikidata_qids(qids, batch_size=200):
+    """Return {QID → entry} with the best-ranked Wikipedia sitelink for each QID."""
+    mapping = {}
+    qids = list(dict.fromkeys(qids))
+    for start in tqdm(range(0, len(qids), batch_size), desc="Sitelink batches"):
+        batch = qids[start:start + batch_size]
+        data = _post_sparql(build_sparql_qid_query(batch))
+        if not data:
+            continue
+        for row in data["results"]["bindings"]:
+            entry = _entry_from_sparql_row(row)
+            entry["wiki_lookup_source"] = "wikidata_geopark_designation"
+            _merge_entry(mapping, row["item"]["value"].rsplit("/", 1)[-1], entry)
+        time.sleep(SLEEP_SPARQL)
+    return mapping
+
+
+def resolve_geoparks_by_designation(geoparks, name_index=None):
+    """Resolve geoparks to Wikipedia articles through the designated-item name index.
+
+    `geoparks` is an iterable of (geopark_id, name_en) pairs. Returns a mapping in the
+    same shape as query_wikidata_batch(), keyed by the geopark's Internal ID.
+    """
+    if name_index is None:
+        name_index = query_geopark_name_index()
+    matched = {}
+    for geopark_id, name in geoparks:
+        qid = name_index.get(geopark_name_key(name))
+        if qid:
+            matched[str(geopark_id)] = qid
+    print(f"  [geoparks] {len(matched):,} matched to a Wikidata item by name")
+    sitelinks = query_wikidata_qids(matched.values()) if matched else {}
+    mapping = {}
+    for geopark_id, qid in matched.items():
+        entry = sitelinks.get(qid)
+        if entry:
+            mapping[geopark_id] = dict(entry)
+    print(f"  [geoparks] {len(mapping):,} of those have a Wikipedia article")
+    return mapping
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # 4. Wikimedia pageviews
 #
 # Images are NOT fetched from Wikimedia. Every photo shown on the globe comes from the
@@ -775,17 +1002,18 @@ def get_pageviews(project, title, retries=4):
 
 # Properties written to sites.geojson. Anything else stays in the notebook's DataFrame.
 GEOJSON_FIELDS = [
-    "site_id", "label", "short_label", "states", "iso_codes", "region",
+    "dataset", "site_id", "label", "short_label", "states", "iso_codes", "region",
     "category", "color_key", "in_danger", "date_inscribed", "criteria",
     "area_hectares", "short_description", "component_count",
     "unesco_url", "image_url", "extra_image_urls", "image_count",
     "image_author", "image_copyright", "image_caption", "image_source",
+    "video_url", "website_url",
     "wiki_title", "wiki_language", "wiki_project", "wiki_url", "wikidata_url",
     "popularity", "label_rank", "label_count", "point_source",
     "cluster_component_count", "cluster_share",
 ]
 
-INT_FIELDS = {"site_id", "date_inscribed", "component_count", "popularity",
+INT_FIELDS = {"date_inscribed", "component_count", "popularity",
               "label_rank", "label_count", "cluster_component_count", "image_count"}
 FLOAT_FIELDS = {"area_hectares", "cluster_share"}
 BOOL_FIELDS = {"in_danger"}
@@ -819,7 +1047,12 @@ def feature_properties(row):
         value = clean_json_value(row.get(field))
         if value is None:
             continue
-        if field in INT_FIELDS:
+        if field == "site_id":
+            # World Heritage properties are numbered; geoparks are keyed by their
+            # alphanumeric Internal ID, which must survive as a string.
+            text = str(value).strip()
+            value = int(text) if text.isdigit() else text
+        elif field in INT_FIELDS:
             try:
                 value = int(round(float(value)))
             except (TypeError, ValueError):

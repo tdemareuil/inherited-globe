@@ -527,6 +527,11 @@
             box-shadow: 0 0 8px #FF4D5E;
         }
 
+        .dot-geopark {
+            background: #FF7AD9;
+            box-shadow: 0 0 8px #FF7AD9;
+        }
+
         .dot-group {
             background: rgba(255, 255, 255, 0.65);
             box-shadow: none;
@@ -738,6 +743,21 @@
             color: rgba(255, 255, 255, 0.78);
             font-size: 11px;
             line-height: 1.6;
+        }
+
+        /* Geoparks publish a video and an official site; World Heritage properties
+           publish neither, so the row is simply absent for them. Kept inside the
+           scroller so it reads as the end of the text, not as a pinned footer. */
+        .popup-back-links {
+            display: block;
+            margin-top: 10px;
+            font-size: 11px;
+        }
+
+        .popup-back-links a {
+            color: #D9A2FF;
+            text-decoration: underline;
+            text-decoration-color: rgba(217, 162, 255, 0.4);
         }
 
         .popup-description::-webkit-scrollbar {
@@ -1050,7 +1070,9 @@
                         <p>
                             Mapping every
                             <a href="https://whc.unesco.org/en/list/" target="_blank" rel="noopener noreferrer">UNESCO
-                                World Heritage</a> site.
+                                World Heritage</a> site and
+                            <a href="https://www.unesco.org/en/iggp" target="_blank"
+                                rel="noopener noreferrer">Global Geopark</a>.
                             Sized by Wikipedia popularity (annual pageviews) — zoom in to reveal lesser-known sites.
                             More details <button id="details-open" class="text-link"
                                 type="button">here</button>.<br><br>
@@ -1071,6 +1093,8 @@
                                     class="dot dot-natural"></span> Natural</label>
                             <label><input type="checkbox" name="category-filter" value="Mixed"><span
                                     class="dot dot-mixed"></span> Mixed</label>
+                            <label><input type="checkbox" name="category-filter" value="Geopark"><span
+                                    class="dot dot-geopark"></span> Global Geopark</label>
                         </div>
                         <div class="filter-group" data-filter-group="danger">
                             <div class="filter-title">World Heritage in Danger</div>
@@ -1132,12 +1156,22 @@
                                 Heritage Committee has placed on the
                                 <a href="https://whc.unesco.org/en/danger/" target="_blank"
                                     rel="noopener noreferrer">List of World Heritage in Danger</a> are drawn in red,
-                                overriding their category color. Total sites displayed: <span
-                                    id="site-count">&mdash;</span>.
+                                overriding their category color.
                             </p>
                             <p>
-                                <span class="method-step">2. Geographic data</span>Coordinates come from the official
-                                UNESCO record for each property. Serial properties &mdash; a single inscription made of
+                                <span class="method-step">2. The Geoparks</span>Every
+                                <a href="https://www.unesco.org/en/iggp" target="_blank"
+                                    rel="noopener noreferrer">UNESCO Global Geopark</a><sup>2</sup>, a separate
+                                programme run since 2015 for territories whose geological heritage is managed
+                                together with education and sustainable development. They are not a World
+                                Heritage category, so they carry their own color, and the Danger list &mdash; a
+                                World Heritage instrument &mdash; never applies to them.
+                                Total sites displayed, across both programmes:
+                                <span id="site-count">&mdash;</span>.
+                            </p>
+                            <p>
+                                <span class="method-step">3. Geographic data</span>Coordinates come from the official
+                                UNESCO record for each property or geopark. Serial World Heritage properties &mdash; a single inscription made of
                                 several separate components, such as the 758 parts of the Frontiers of the Roman
                                 Empire &mdash; publish one point per component;
                                 <span id="centroid-sentence-primary">those sites are placed on their main
@@ -1145,21 +1179,27 @@
                                 <span id="centroid-sentence-multi">those components are clustered by distance and a
                                     site can receive several label points, but secondary clusters are kept only when
                                     they hold enough of its components.</span>
-                                Points are colored by category, highlighting where cultural and natural heritage
-                                concentrate.
+                                Every geopark publishes a single coordinate, so none of that applies to them.
+                                Points are colored by category, highlighting where cultural, natural and
+                                geological heritage concentrate.
                             </p>
                             <p>
-                                <span class="method-step">3. Popularity and images</span>Name size and weight come from
+                                <span class="method-step">4. Popularity and images</span>Name size and weight come from
                                 Wikipedia pageviews (human traffic only) over the last completed year. More-viewed
                                 sites appear earlier; zooming in reveals less-viewed ones. Photos come from the
-                                UNESCO photo gallery published with each property record.
+                                UNESCO photo gallery published with each property record &mdash; a whole gallery
+                                for a World Heritage property, a single photo for a geopark.
                             </p>
 
                             <span class="data-credit">
                                 <sup>1</sup>Site data &copy; UNESCO World Heritage Centre, from the official
                                 <a href="https://data.unesco.org/explore/assets/whc001/export/" target="_blank"
                                     rel="noopener noreferrer">World Heritage List export</a>,
-                                downloaded 16 September 2026. Photos &copy; their respective authors, as
+                                downloaded 16 September 2026.
+                                <sup>2</sup>Geopark data &copy; UNESCO, from the official
+                                <a href="https://data.unesco.org/explore/assets/eg0001/export/" target="_blank"
+                                    rel="noopener noreferrer">Global Geoparks export</a>,
+                                downloaded 17 September 2026. Photos &copy; their respective authors, as
                                 credited in each popup.
                             </span>
                         </div>
@@ -1643,7 +1683,7 @@
         }
 
         const SEARCH_RESULT_LIMIT = 30;
-        const CATEGORY_DOT_CLASSES = { Cultural: 'dot-cultural', Natural: 'dot-natural', Mixed: 'dot-mixed', Danger: 'dot-danger' };
+        const CATEGORY_DOT_CLASSES = { Cultural: 'dot-cultural', Natural: 'dot-natural', Mixed: 'dot-mixed', Geopark: 'dot-geopark', Danger: 'dot-danger' };
 
         // Grows by SEARCH_RESULT_LIMIT each time the footer is clicked; only the X (or a reload) resets it.
         let searchResultLimit = SEARCH_RESULT_LIMIT;
@@ -2082,6 +2122,7 @@
                         'Cultural', '#FFC24D',
                         'Natural', '#5CE68A',
                         'Mixed', '#4DD9FF',
+                        'Geopark', '#FF7AD9',
                         'Danger', '#FF4D5E',
                         '#ffffff'],
                     'circle-blur': 0.4,
@@ -2153,14 +2194,14 @@
         let syncFlipHeight = () => { };
         // Tallest the description face may grow before its text starts scrolling instead.
         const POPUP_BACK_MAX_HEIGHT = 260;
-        const neonColor = { Cultural: '#FFC24D', Natural: '#5CE68A', Mixed: '#4DD9FF', Danger: '#FF4D5E' };
-        const categoryLabel = { Cultural: 'Cultural', Natural: 'Natural', Mixed: 'Mixed (cultural & natural)', Danger: 'In danger' };
+        const neonColor = { Cultural: '#FFC24D', Natural: '#5CE68A', Mixed: '#4DD9FF', Geopark: '#FF7AD9', Danger: '#FF4D5E' };
+        const categoryLabel = { Cultural: 'Cultural', Natural: 'Natural', Mixed: 'Mixed (cultural & natural)', Geopark: 'UNESCO Global Geopark', Danger: 'In danger' };
 
         function showSitePopup(feature) {
             if (!feature) return;
             const {
-                site_id, label, category, color_key, in_danger, states,
-                date_inscribed, short_description,
+                dataset, site_id, label, category, color_key, in_danger, states,
+                date_inscribed, short_description, video_url, website_url,
                 unesco_url, image_url, extra_image_urls, image_author, image_copyright,
                 image_caption, image_source,
                 wiki_title, wiki_project, wiki_url, wikidata_url, popularity
@@ -2169,6 +2210,10 @@
             if (!Array.isArray(coords) || coords.length < 2) return;
             const color = neonColor[color_key] || '#fff';
             const siteName = String(label || 'Unnamed site');
+            // Geoparks are designated, not inscribed, and they are the only points that
+            // carry a video and an official website.
+            const isGeopark = dataset === 'geopark' || color_key === 'Geopark';
+            const dateVerb = isGeopark ? 'designated' : 'inscribed';
             const unescoHref = safeExternalUrl(unesco_url) || unescoUrlFromSiteId(site_id);
             const wikiHref = safeExternalUrl(wiki_url) || wikipediaUrlFromProject(wiki_project, wiki_title);
             const wikidataHref = safeExternalUrl(wikidata_url);
@@ -2231,6 +2276,13 @@
                 ? `<span class="popup-image-source">${sourceLinks}</span>${creditLine}`
                 : '';
 
+            const videoHref = safeExternalUrl(video_url);
+            const websiteHref = safeExternalUrl(website_url);
+            const backLinks = [
+                videoHref ? `<a href="${escapeHtml(videoHref)}" target="_blank" rel="noopener noreferrer">Video</a>` : '',
+                websiteHref ? `<a href="${escapeHtml(websiteHref)}" target="_blank" rel="noopener noreferrer">Website</a>` : '',
+            ].filter(Boolean).join(' <span aria-hidden="true">|</span> ');
+
             const titleHref = unescoHref || wikiHref;
             popup.setLngLat(coords).setHTML(`
                 <div class="popup-flip" id="popup-flip">
@@ -2241,7 +2293,7 @@
                         ? `<a href="${escapeHtml(titleHref)}" target="_blank" rel="noopener noreferrer" style="color:${color}; text-decoration:underline">${escapeHtml(siteName)}</a>`
                         : `<span style="color:${color}">${escapeHtml(siteName)}</span>`}${infoButtonHtml}
                         </b><br>
-                        <span style="color:${color}; font-weight:bold">&#9679; ${escapeHtml(categoryLabel[color_key] || category || 'Unknown category')}</span>${date_inscribed ? ` <span style="color:rgba(255,255,255,0.5)">(inscribed ${escapeHtml(String(date_inscribed))})</span>` : ''}<br>
+                        <span style="color:${color}; font-weight:bold">&#9679; ${escapeHtml(categoryLabel[color_key] || category || 'Unknown category')}</span>${date_inscribed ? ` <span style="color:rgba(255,255,255,0.5)">(${dateVerb} ${escapeHtml(String(date_inscribed))})</span>` : ''}<br>
                         ${in_danger && color_key === 'Danger' && category ? `<span style="color:rgba(255,255,255,0.78)">${escapeHtml(String(category))} property</span><br>` : ''}
                         ${statesHtml}
                         <span style="color:rgba(255,255,255,0.6); font-size:11px">Wikipedia views/yr: ${formattedPopularity}</span>
@@ -2254,7 +2306,8 @@
                                     aria-label="Back to the site details">&larr;</button>
                                 <span class="popup-back-title" style="color:${color}">${escapeHtml(siteName)}</span>
                             </div>
-                            <span class="popup-description">${escapeHtml(descriptionText)}</span>
+                            <span class="popup-description">${escapeHtml(descriptionText)}${backLinks
+                        ? `<span class="popup-back-links">${backLinks}</span>` : ''}</span>
                         </div>
                     ` : ''}
                 </div>

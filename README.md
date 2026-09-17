@@ -1,6 +1,6 @@
 # An Inherited Globe
 
-1,273 places have been judged to hold "outstanding universal value" to humanity, and inscribed on the UNESCO World Heritage List since the 1972 Convention came into force. This interactive 3D globe maps every one of them. Sister map to [An Endangered Globe](https://github.com/tdemareuil/endangered-globe), and like it inspired by [Topi Tjukanov's Notable People](https://tjukanovt.github.io/notable-people): the map shows no city names — the world's geography is redrawn entirely through the names of what we inherited.
+1,273 places have been judged to hold "outstanding universal value" to humanity, and inscribed on the UNESCO World Heritage List since the 1972 Convention came into force. Another 241 territories hold geological heritage of international significance, and carry the UNESCO Global Geopark label. This interactive 3D globe maps all 1,514 of them. Sister map to [An Endangered Globe](https://github.com/tdemareuil/endangered-globe), and like it inspired by [Topi Tjukanov's Notable People](https://tjukanovt.github.io/notable-people): the map shows no city names — the world's geography is redrawn entirely through the names of what we inherited.
 
 Where the endangered globe maps what we are about to lose, this one maps what was handed down.
 
@@ -10,12 +10,14 @@ Where the endangered globe maps what we are about to lose, this one maps what wa
 - [Categories Displayed](#categories-displayed)
 - [Data Architecture](#data-architecture)
   - [Channel 1 — UNESCO World Heritage List export](#channel-1--unesco-world-heritage-list-export)
-  - [Channel 2 — Wikidata (SPARQL API)](#channel-2--wikidata-sparql-api)
-  - [Channel 3 — Wikipedia Pageviews (public REST API)](#channel-3--wikipedia-pageviews-public-rest-api)
+  - [Channel 2 — UNESCO Global Geoparks export](#channel-2--unesco-global-geoparks-export)
+  - [Channel 3 — Wikidata (SPARQL API)](#channel-3--wikidata-sparql-api)
+  - [Channel 4 — Wikipedia Pageviews (public REST API)](#channel-4--wikipedia-pageviews-public-rest-api)
 - [Python Pipeline](#python-pipeline)
   - [Step 1 — Parsing & label points](#step-1--parsing--label-points)
   - [Step 2 — Popularity harvesting](#step-2--popularity-harvesting)
-  - [Step 3 — Clean GeoJSON export](#step-3--clean-geojson-export)
+  - [Step 3 — The geoparks](#step-3--the-geoparks)
+  - [Step 4 — Clean GeoJSON export](#step-4--clean-geojson-export)
 - [Running the pipeline](#running-the-pipeline)
 - [Web Interface](#web-interface)
 - [Differences from the endangered globe](#differences-from-the-endangered-globe)
@@ -40,13 +42,18 @@ Two core mechanics drive the experience, identical to the sister project:
 | Cultural | Cultural property | Gold `#FFC24D` | 991 |
 | Natural | Natural property | Neon green `#5CE68A` | 240 |
 | Mixed | Mixed cultural & natural | Cyan `#4DD9FF` | 42 |
+| Geopark | UNESCO Global Geopark | Magenta `#FF7AD9` | 241 |
 | Danger | On the List of World Heritage in Danger | Red `#FF4D5E` | 58 |
+
+The first three counts are World Heritage categories and add up to the 1,273 inscribed properties; the 58 in danger are counted inside them.
+
+Geoparks come from a different UNESCO programme, not from the World Heritage List, so they are a fourth colour rather than a fourth category of property. They are never in danger — that list is a World Heritage instrument — and they have no inscription criteria and no serial components.
 
 Danger is a flag, not a category: a property in danger is still Cultural, Natural or Mixed. On the globe the red dot **overrides** the category color, so the endangered part of the inheritance reads at a glance, and the popup names the underlying category on its own line.
 
-Because the two are independent, so are the controls. The pipeline exports both: `color_key` (Cultural / Natural / Mixed / Danger) drives the dot color only, while `category` and the boolean `in_danger` drive the filters. The panel has three sections:
+Because the two are independent, so are the controls. The pipeline exports both: `color_key` (Cultural / Natural / Mixed / Geopark / Danger) drives the dot color only, while `category` and the boolean `in_danger` drive the filters. The panel has three sections:
 
-- **Category** — checkboxes on `category`, so ticking *Cultural* keeps an in-danger cultural property even though its dot is red.
+- **Category** — checkboxes on `category`, so ticking *Cultural* keeps an in-danger cultural property even though its dot is red. *Global Geopark* sits in the same section, since on this globe the two programmes are simply two kinds of point.
 - **World Heritage in Danger** — a single toggle labelled *In danger*. Off, it constrains nothing; on, it narrows to the 58 properties on the Danger List, composing with whatever category and region selection is already active. Its knob carries the same red the in-danger dots use on the globe, so the control names its own colour; the track stays inert, and only the knob moves.
 - **Region** — checkboxes on the five UNESCO programme regions: Africa, Arab States, Asia and the Pacific, Europe and North America, Latin America and the Caribbean.
 
@@ -54,18 +61,20 @@ Because the two are independent, so are the controls. The pipeline exports both:
 
 ## Data Architecture
 
-The project combines UNESCO and Wikimedia data through three technical channels in Python:
+The project combines UNESCO and Wikimedia data through four technical channels in Python:
 
 ```
-[ UNESCO WHC export ]          [ Wikidata ]            [ Wikipedia API ]
-      (.CSV)                  (SPARQL query)           (REST Pageviews)
-         │                          │                         │
- 1. Names, category,         2. Site ID → Article       3. Traffic volume
-    danger, region,             title mapping              over 12 months
-    coordinates, ALL photos
+[ UNESCO WHC export ]  [ UNESCO geoparks ]      [ Wikidata ]         [ Wikipedia API ]
+      (.CSV)                 (.CSV)             (SPARQL query)       (REST Pageviews)
+         │                     │                      │                     │
+ 1. Names, category,   2. Names, year,         3. Record → Article    4. Traffic volume
+    danger, region,       country, area,          title mapping          over 12 months
+    coordinates,          coordinates,
+    ALL photos            ONE photo,
+                          video + website
 ```
 
-Only channel 1 is mandatory: it already contains coordinates, categories and every photo the globe shows. Channels 2–3 exist purely to size the labels — **no image is ever fetched from Wikimedia.**
+Only channels 1–2 are mandatory: they already contain coordinates, categories and every photo the globe shows. Channels 3–4 exist purely to size the labels — **no image is ever fetched from Wikimedia.**
 
 ### Channel 1 — UNESCO World Heritage List export
 
@@ -82,7 +91,23 @@ Notable properties of the source data:
 
 The CSV is a complete snapshot of the List, so unlike the IUCN pipeline there is no API token, no rate limit, and no spatial download to manage for this channel. To refresh the map, download a newer export, replace `data/whc001.csv`, and re-run the notebook.
 
-### Channel 2 — Wikidata (SPARQL API)
+### Channel 2 — UNESCO Global Geoparks export
+
+What we take: English name (`Titre EN`), English introduction (`Introduction EN`), designation date, country codes, area in hectares, transnational flag, official coordinates, the single `Main Image`, and the two outbound links the World Heritage export has no equivalent of — `Video` and `Site Internet`.
+
+The source file is the official geoparks export published at [data.unesco.org](https://data.unesco.org/explore/assets/eg0001/export/), committed here as `data/eg0001.csv` (241 rows × 19 columns, downloaded 17 September 2026).
+
+Notable properties of the source data:
+
+- **Coordinates.** All 241 rows carry a `Coordonnées` field, so there is no clustering, no centroid and no manual placement to do for this channel — the whole spatial machinery of Channel 1 is bypassed.
+- **Region.** There is no region column, but `Internal ID` is prefixed with the programme region (`EUFR10`, `ASCN01`, `NACA03`). Those prefixes map onto the same five UNESCO regions the World Heritage export uses, with Canada (`NA`) and New Zealand (`OC`) folded into their neighbouring region exactly as the World Heritage List does, so one region filter serves both datasets.
+- **Countries.** `Pays` gives ISO 3166-1 alpha-2 codes only (`AT,SI`), where the World Heritage export ships written names too, so the pipeline carries a code → name table for the 51 countries involved.
+- **Photos.** 197 of the 241 rows have a `Main Image`; there is no gallery, no author, no copyright and no caption, so a geopark popup shows one photo with no credit line and no caption overlay. 161 of those URLs are pre-resized (`<InternalID>_main.jpg`, 30–70 kB); the other 36 are raw uploads, up to 13 MB. They are served from Azure blob storage and hotlink cleanly — unlike the World Heritage photos, a scripted `HEAD` returns 200 — but the heavy ones are worth knowing about: a popup opening one pulls the full-resolution file.
+- **Names.** Every single name ends in `UNESCO Global Geopark`. The full `Titre EN` stays as the popup title and as what the search box matches; the globe label drops the suffix, otherwise 241 labels would share a 23-character tail.
+- **Encoding.** UTF-8 with BOM, and the introductions contain numeric HTML entities (`&#160;`) as well as the inline tags the World Heritage export has. Both are handled in the pipeline.
+- **Glued sentences.** `Introduction EN` is two paragraphs concatenated, and the space at the join is lost: *…the Japanese archipelago.At the Date Museum…*. 226 of the 241 introductions are affected (and one World Heritage description), so the pipeline puts the space back wherever a stop sits between a lowercase letter and a capital — a guard that leaves initialisms, decimals and ellipses alone.
+
+### Channel 3 — Wikidata (SPARQL API)
 
 What we take: the Wikipedia article behind each property, and nothing else. Wikidata stores the UNESCO site ID as property [`P757`](https://www.wikidata.org/wiki/Property:P757), so one batched SPARQL query maps most of the List to a Wikidata item and its Wikipedia sitelinks. This is the exact counterpart of the `P627` (IUCN taxon ID) lookup in the sister project — except that the `P18` image is deliberately **not** requested, since photos come from the export.
 
@@ -99,11 +124,17 @@ Name variants matter here because UNESCO inscription names are written as titles
 
 Anything the chain still misses can be pinned by hand in the notebook's `MANUAL_ARTICLES` cell.
 
-### Channel 3 — Wikipedia Pageviews (public REST API)
+**Geoparks have no identifier to join on.** Wikidata carries no UNESCO Global Geopark identifier property at all, and the one historical identifier it does have — [`P2467`](https://www.wikidata.org/wiki/Property:P2467), Global Geoparks Network ID (former scheme) — sits on roughly 130 items, is formatted as `Portugal/6444`, and also covers national geoparks that were never UNESCO-designated. It cannot be joined onto `Internal ID`. So the field to match on is the **name**.
+
+The first pass still goes through Wikidata rather than straight to a text search. One query pulls every item marked a UNESCO Global Geopark — by designation ([`P1435`](https://www.wikidata.org/wiki/Property:P1435) = [`Q53444003`](https://www.wikidata.org/wiki/Q53444003)), by class (`P31`), or by that former GGN identifier — with all of its labels and aliases in eight languages, and our names are matched against that closed set of ~180 items. Names are compared with the programme words stripped out and the stranded articles trimmed, which is what lets *Terres d'Hérault UNESCO Global Geopark* meet the Wikidata label *Géoparc mondial UNESCO des Terres d'Hérault*. A name that two different items answer to is dropped rather than guessed at.
+
+That resolves about six in ten. The rest fall through to the same two-pass name chain above, searched on the name **without** its programme suffix — `Psiloritis`, not `Psiloritis UNESCO Global Geopark` — and anything still unresolved can be pinned in the notebook's `GEOPARK_ARTICLE_OVERRIDES` cell.
+
+### Channel 4 — Wikipedia Pageviews (public REST API)
 
 What we take: the cultural popularity score. Given the article title from Wikidata, the API returns the total view count over the past 12 completed months. The query uses `user` (human traffic only), excluding bots and automated crawlers.
 
-Pageviews are fetched once per unique article and then filled back onto every label point of the property, so a serial property with two label points costs one request rather than two.
+Pageviews are fetched once per unique article and then filled back onto every label point of the property, so a serial property with two label points costs one request rather than two. Both datasets share one cache, so an article a geopark happens to share with a World Heritage property is only ever fetched once.
 
 An optional [Wikimedia API token](https://api.wikimedia.org/) in the git-ignored `data/secrets/wikimedia_token.txt` raises the rate limit from 500 to 5,000 req/hour. The pageviews endpoint is IP-limited and does not honour the token, so that stage stays paced at roughly one request per second either way.
 
@@ -132,7 +163,7 @@ With the defaults, all 1,273 properties produce 1,273 label points: 1,218 on the
 
 For each property:
 
-1. Resolve a Wikipedia article via the fallback chain described in Channel 2 above.
+1. Resolve a Wikipedia article via the fallback chain described in Channel 3 above.
 2. Query the Wikimedia Pageviews API for the 12-month view count.
 3. Take `Main Image` as the primary photo and **every** URL in the `Images` gallery as further popup slides. `MAX_EXTRA_IMAGES = None` keeps them all; set it to an integer to cap the slideshow and shrink the exported file.
 4. Carry `Main Image Author`, `Main Image Copyright` and `Main Image Caption EN` through as `image_author`, `image_copyright` and `image_caption`. All three describe the main photo only — the export publishes no per-photo metadata for the gallery — so they are cleared for the 12 properties with no main photo.
@@ -149,15 +180,30 @@ Descriptions are exported in full (`DESCRIPTION_MAX_CHARS = None`), averaging 58
 
 > **On hotlinking.** UNESCO serves its photos from `whc.unesco.org/document/<id>` behind a bot challenge: scripted requests get a 403, so the notebook cannot verify them, but they load normally in a browser — verified in the globe. The popup still sends `referrerpolicy="no-referrer"` and collapses the whole image block if a photo fails, so the card degrades to text rather than showing a grey box.
 
-### Step 3 — Clean GeoJSON export
+### Step 3 — The geoparks
 
-The notebook produces `sites.geojson`, a list of GeoJSON Point features (~1.6 MB for the full List). A property appears more than once only when `MAX_LABEL_POINTS_PER_SITE > 1` and its components form several large clusters:
+Section 6 of the notebook runs the same shape of pipeline over `data/eg0001.csv`, and it is deliberately short because the export asks for so little:
+
+- Read the export, parse the coordinate, derive the region from the `Internal ID` prefix and the country names from the ISO codes, take the designation year from `Date`, and strip the CMS's tags and entities from the introduction.
+- Key each geopark by its `Internal ID`. World Heritage properties are numbered, so `site_id` is a string for geoparks and an integer for properties; the browser treats it as an opaque key, and only falls back to building a `whc.unesco.org/en/list/<id>` URL from it when it is all digits.
+- Set `category` and `color_key` to `Geopark`, `in_danger` to false, and `point_source` to `geopark_coordinates`. One published coordinate means exactly one label point each.
+- Derive the globe label by dropping the `UNESCO Global Geopark` suffix and then shortening as usual; the longest that survives is 37 characters.
+- Take `Main Image` as the only photo, and leave `image_author`, `image_copyright`, `image_caption` and `extra_image_urls` empty — the export has no such columns.
+- Carry `Video` and `Site Internet` through as `video_url` and `website_url`.
+- Resolve articles and pageviews exactly as above, then concatenate onto the World Heritage frame. De-duplication of coordinates runs across **both** datasets, so a geopark sitting on the same point as a World Heritage property is nudged apart rather than hidden behind it.
+
+All 241 geoparks are placed: 121 in Europe and North America, 99 in Asia and the Pacific, 16 in Latin America and the Caribbean, 3 in Africa, 2 in the Arab States.
+
+### Step 4 — Clean GeoJSON export
+
+The notebook produces `sites.geojson`, a list of GeoJSON Point features (~3 MB for both lists: 1,273 properties + 241 geoparks). A `dataset` field says which export each feature came from. A property appears more than once only when `MAX_LABEL_POINTS_PER_SITE > 1` and its components form several large clusters:
 
 ```json
 {
   "type": "Feature",
   "geometry": { "type": "Point", "coordinates": [78.04222, 27.17417] },
   "properties": {
+    "dataset": "whc",
     "site_id": 252,
     "label": "Taj Mahal",
     "states": "India",
@@ -196,14 +242,49 @@ The notebook produces `sites.geojson`, a list of GeoJSON Point features (~1.6 MB
 
 `short_label` is present only when the official name is too long for the globe; fields with no value (`area_hectares` when the export reports 0, `wiki_title` when no article resolved) are omitted rather than exported as null.
 
+A geopark feature is the same shape with fewer fields — no `criteria`, no `component_count`, no photo metadata, no gallery — plus the two links only it has:
+
+```json
+{
+  "type": "Feature",
+  "geometry": { "type": "Point", "coordinates": [3.3135, 43.6787] },
+  "properties": {
+    "dataset": "geopark",
+    "site_id": "EUFR10",
+    "label": "Terres d'Hérault UNESCO Global Geopark",
+    "short_label": "Terres d'Hérault",
+    "states": "France",
+    "iso_codes": "FR",
+    "region": "Europe and North America",
+    "category": "Geopark",
+    "color_key": "Geopark",
+    "in_danger": false,
+    "date_inscribed": 2026,
+    "area_hectares": 205600.0,
+    "short_description": "The Terres d'Hérault UNESCO Global Geopark is a name composed of two words. …",
+    "unesco_url": "https://www.unesco.org/en/iggp/terres-dherault-unesco-global-geopark",
+    "image_url": "https://bioportalstprod.blob.core.windows.net/portal-media-public/GP/EUFR10/image/main/…jpg",
+    "image_count": 1,
+    "image_source": "UNESCO",
+    "video_url": "https://youtu.be/5sMgKjBXTiM",
+    "website_url": "https://geoparc.herault.fr/",
+    "popularity": 1,
+    "label_rank": 1,
+    "label_count": 1,
+    "point_source": "geopark_coordinates"
+  }
+}
+```
+
 For dataset-level credit, use:
 
 ```text
 Site data © UNESCO World Heritage Centre, official World Heritage List export, downloaded 16 September 2026. https://data.unesco.org/explore/assets/whc001/export/
+Geopark data © UNESCO, official Global Geoparks export, downloaded 17 September 2026. https://data.unesco.org/explore/assets/eg0001/export/
 Photographs © their respective authors, as credited per property.
 ```
 
-If you refresh the export, update `WHC_EXPORT_DATE` in the notebook's configuration cell and the credit line at the foot of the Method panel in `index.html`.
+If you refresh either export, update `WHC_EXPORT_DATE` / `GEOPARK_EXPORT_DATE` in the notebook's configuration cell and the credit lines at the foot of the Method panel in `index.html`.
 
 ---
 
@@ -214,19 +295,24 @@ pip install pandas requests tqdm ipywidgets matplotlib jupyterlab
 jupyter lab pipeline.ipynb
 ```
 
-Run the cells top to bottom. The configuration cell holds every knob; the four `RUN_*` flags gate the network stages so they can be skipped or re-run independently:
+Run the cells top to bottom. The configuration cell holds every knob; the six `RUN_*` flags gate the network stages so they can be skipped or re-run independently:
 
 | Flag | Stage | Cost |
 |---|---|---|
-| `RUN_WIKIDATA_BATCH` | `P757` SPARQL lookup | a few batched queries, ~1 min |
+| `RUN_WIKIDATA_BATCH` | `P757` SPARQL lookup for the World Heritage List | a few batched queries, ~1 min |
 | `RUN_NAME_FALLBACK` | name-based resolution for the rest | one or more lookups per unresolved site |
 | `RUN_PAGEVIEWS` | 12-month view counts | ~1 req/s per unique article (~20 min for the full List) |
+| `RUN_GEOPARK_DESIGNATION` | designated-item name match for the geoparks | one SPARQL query + one sitelink batch, <1 min |
+| `RUN_GEOPARK_NAME_FALLBACK` | name-based resolution for the ~100 left over | one or more lookups per unresolved geopark |
+| `RUN_GEOPARK_PAGEVIEWS` | 12-month view counts for the geoparks | ~1 req/s per unique article (~4 min) |
 
 None of them fetch images.
 
-A full cold run takes roughly 25–40 minutes. Re-runs are near-instant: everything is cached under `data/cache/`.
+A full cold run takes roughly 30–50 minutes. Re-runs are near-instant: everything is cached under `data/cache/`.
 
-The notebook ends with quality-check cells — popularity distribution, coverage by category and region, the least-viewed sites, and labels still long enough to crowd the globe.
+There are four checkpoints — after parsing, after Wikidata, after pageviews, and after the geoparks — so any stage can be re-entered on its own.
+
+The notebook ends with quality-check cells — popularity distribution, coverage by category and region, the least-viewed sites, and labels still long enough to crowd the globe — all of them over the combined frame.
 
 Preview locally with any static server:
 
@@ -268,9 +354,9 @@ The negative sort key gives more popular sites placement priority, so the GPU hi
 
 Labels use `short_label` when present and wrap at `text-max-width: 8` ems, so a long inscription name becomes two or three short lines rather than one banner across a continent.
 
-**Neon dots.** Below each text label, a `circle` layer with `'circle-blur': 0.4`, colored by `color_key` (see table above). At low zoom, the Earth appears covered in a glowing swarm of gold, green and red fireflies before individual names become legible.
+**Neon dots.** Below each text label, a `circle` layer with `'circle-blur': 0.4`, colored by `color_key` (see table above). At low zoom, the Earth appears covered in a glowing swarm of gold, green, magenta and red fireflies before individual names become legible.
 
-**Glassmorphism UI.** The filter panel floats over the map in a blurred card: category checkboxes, then the Danger List toggle in its own section, then region checkboxes, with a Method view behind a "here" link.
+**Glassmorphism UI.** The filter panel floats over the map in a blurred card: category checkboxes (the three World Heritage categories plus *Global Geopark*), then the Danger List toggle in its own section, then region checkboxes, with a Method view behind a "here" link.
 
 **Zoom on a random site.** A button under the filters picks a random property among those the current filters keep — restricted to sites that have an image — then flies the globe to it and opens its popup.
 
@@ -278,9 +364,9 @@ Labels use `short_label` when present and wrap at `text-max-width: 8` ems, so a 
 
 Both are composed with the other controls rather than overriding them, so a search narrows whatever category, danger and region selection is already active.
 
-**Popup — a two-sided card.** The front holds the facts, kept deliberately short: the photo, the site name linking to its UNESCO record, category and inscription year, states parties, annual Wikipedia views, and source links to UNESCO, Wikipedia and Wikidata. Region, area, inscription criteria and component count stay in `sites.geojson` — `region` still drives the region filter — but are not printed on the card.
+**Popup — a two-sided card.** The front holds the facts, kept deliberately short: the photo, the site name linking to its UNESCO record, category and inscription year, states parties, annual Wikipedia views, and source links to UNESCO, Wikipedia and Wikidata. A geopark card is the same card with less on it: one photo instead of a gallery, no credit line and no caption, and the year reads *designated* rather than *inscribed*. Region, area, inscription criteria and component count stay in `sites.geojson` — `region` still drives the region filter — but are not printed on the card.
 
-A small circled **i** beside the title flips the card on its vertical axis to reveal the property's full UNESCO description, with a `←` button to flip back. The card's height animates with the rotation so each face is sized to its own content, and a long description scrolls inside the back face rather than stretching the card. The back face repeats the site name as its header, wrapping to a second line for the long inscription names rather than cutting them off.
+A small circled **i** beside the title flips the card on its vertical axis to reveal the property's full UNESCO description — `Short Description EN` for a World Heritage property, `Introduction EN` for a geopark — with a `←` button to flip back. A geopark's back face ends with a blank line and then its `Video | Website` links, the two destinations the World Heritage export has no equivalent of; they scroll with the text rather than sitting pinned to the bottom of the card. The card's height animates with the rotation so each face is sized to its own content, and a long description scrolls inside the back face rather than stretching the card. The back face repeats the site name as its header, wrapping to a second line for the long inscription names rather than cutting them off.
 
 The source row is `UNESCO | Wikipedia | Wikidata` — records, not image files. The Wikipedia slot is always rendered: a real link once the pipeline resolves the article, and a dimmed, non-clickable placeholder until then, so the row does not reflow when popularity data lands. The photo credit sits below it as plain text, `Photo: <author> · © <copyright>`, collapsed to a single `© <name>` when the export repeats the same name in both columns — which it usually does. The comparison ignores spacing and full stops, because the two spellings are often punctuated differently by hand (`Gael R. Vande weghe` / `Gael R.Vande weghe`). `Main Image Caption EN` is not shown by default; it fades in over the bottom of the photo when the pointer is **moved over** the photo. Deliberately not CSS `:hover`: MapLibre anchors a popup below the clicked point whenever there is room above it, which puts the photo directly under the cursor, so `:hover` matched the instant the card opened. A class set on real `mousemove` means a stationary cursor never reveals it. `:focus-within` is avoided for the same reason — the slide arrows live inside the image wrap and would pin the caption open after a click. Captions belong to the main photo only, so they disappear when you page into the gallery.
 
@@ -300,16 +386,16 @@ Everything that made the sister project work is kept — starfield, de-overlap, 
 
 | | Endangered Globe | Inherited Globe |
 |---|---|---|
-| Subject | Threatened animal species | UNESCO World Heritage properties |
+| Subject | Threatened animal species | UNESCO World Heritage properties and Global Geoparks |
 | Point source | Centroids computed from IUCN range polygons | Official UNESCO coordinates, clustered for serial properties |
 | Color dimension | IUCN threat category (EW→NT) | Category, overridden by danger status |
 | Second filter | Animal group | UNESCO region |
 | Third filter | — | World Heritage in Danger toggle |
 | Search fields | Common + scientific name | Site name + states parties |
 | Images | Wikipedia / Wikidata / Commons / iNaturalist, fetched per taxon | UNESCO photo gallery, straight from the export, never fetched |
-| Wikidata key | `P627` (IUCN taxon ID) | `P757` (World Heritage Site ID) |
+| Wikidata key | `P627` (IUCN taxon ID) | `P757` (World Heritage Site ID); no identifier at all for geoparks, so they resolve by name against the designated items |
 | Heavy dependencies | geopandas, shapely, IUCN API token, ~70 GB of shapefiles | pandas + requests |
-| Data source | 5 APIs + local spatial downloads | 1 committed CSV + 3 public APIs |
+| Data source | 5 APIs + local spatial downloads | 2 committed CSVs + 3 public APIs |
 
 The globe label is shortened for display here (`short_label`) because UNESCO inscription names are sentences, where species names are nouns.
 
@@ -319,9 +405,10 @@ The globe label is shortened for display here (`short_label`) because UNESCO ins
 
 - [UNESCO World Heritage List](https://whc.unesco.org/en/list/) and its [data export](https://data.unesco.org/explore/assets/whc001/export/)
 - [List of World Heritage in Danger](https://whc.unesco.org/en/danger/)
+- [UNESCO Global Geoparks](https://www.unesco.org/en/iggp) and their [data export](https://data.unesco.org/explore/assets/eg0001/export/)
 - [An Endangered Globe](https://github.com/tdemareuil/endangered-globe) — the sister project this one derives from
 - [Notable People by Topi Tjukanov](https://tjukanovt.github.io/notable-people) — visual and UX inspiration
 - [MapLibre GL JS docs](https://maplibre.org/maplibre-gl-js/docs/)
-- [Wikidata SPARQL endpoint](https://query.wikidata.org/) — property [`P757`](https://www.wikidata.org/wiki/Property:P757)
+- [Wikidata SPARQL endpoint](https://query.wikidata.org/) — property [`P757`](https://www.wikidata.org/wiki/Property:P757), designation item [`Q53444003`](https://www.wikidata.org/wiki/Q53444003)
 - [Wikimedia Pageviews API](https://wikitech.wikimedia.org/wiki/Analytics/AQS/Pageviews)
 - [maplibre-gl-starfield plugin](https://github.com/markmclaren/maplibre-gl-starfield)
