@@ -15,7 +15,7 @@
         body {
             margin: 0;
             padding: 0;
-            background: #0A0010;
+            background: #000008;
             overflow: hidden;
             width: 100%;
             height: 100%;
@@ -282,16 +282,16 @@
 
         .filter-group input[type="checkbox"] {
             cursor: pointer;
-            accent-color: #B14DFF;
+            accent-color: #FF6B00;
             margin: 0;
         }
 
         .random-species-button {
             width: 100%;
             margin-top: 15px;
-            border: 1px solid rgba(217, 162, 255, 0.40);
+            border: 1px solid rgba(255, 148, 77, 0.36);
             border-radius: 8px;
-            background: rgba(217, 162, 255, 0.12);
+            background: rgba(255, 148, 77, 0.12);
             color: rgba(255, 255, 255, 0.9);
             font: 700 12px/1 'Open Sans', sans-serif;
             padding: 10px 12px;
@@ -299,7 +299,7 @@
         }
 
         .random-species-button:hover {
-            background: rgba(217, 162, 255, 0.18);
+            background: rgba(255, 148, 77, 0.18);
         }
 
         .search-species-button {
@@ -316,9 +316,9 @@
             min-height: 34px;
             margin-top: 8px;
             padding: 0 12px;
-            border: 1px solid rgba(217, 162, 255, 0.40);
+            border: 1px solid rgba(255, 148, 77, 0.36);
             border-radius: 8px;
-            background: rgba(217, 162, 255, 0.12);
+            background: rgba(255, 148, 77, 0.12);
         }
 
         /* Author `display` beats the UA [hidden] rule, so restate it here */
@@ -371,7 +371,7 @@
 
         .search-result:hover,
         .search-result:focus-visible {
-            background: rgba(217, 162, 255, 0.16);
+            background: rgba(255, 148, 77, 0.16);
             outline: none;
         }
 
@@ -404,7 +404,7 @@
 
         .search-results-more:hover,
         .search-results-more:focus-visible {
-            background: rgba(217, 162, 255, 0.12);
+            background: rgba(255, 148, 77, 0.12);
             color: rgba(255, 255, 255, 0.7);
             outline: none;
         }
@@ -441,7 +441,68 @@
         }
 
         .search-no-match {
-            color: #D9A2FF;
+            color: #FF944D;
+        }
+
+        .filter-toggle {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+            color: rgba(255, 255, 255, 0.85);
+        }
+
+        /* The native checkbox stays focusable but invisible; the track is the visible switch. */
+        .toggle-input {
+            position: absolute;
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-track {
+            position: relative;
+            flex-shrink: 0;
+            width: 30px;
+            height: 16px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.14);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            transition: background 160ms ease, border-color 160ms ease;
+        }
+
+        .toggle-knob {
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.75);
+            transition: transform 160ms ease, background 160ms ease;
+        }
+
+        .toggle-input:checked+.toggle-track {
+            background: rgba(255, 77, 94, 0.45);
+            border-color: rgba(255, 77, 94, 0.7);
+        }
+
+        .toggle-input:checked+.toggle-track .toggle-knob {
+            transform: translateX(14px);
+            background: #FF4D5E;
+        }
+
+        .toggle-input:focus-visible+.toggle-track {
+            outline: 2px solid rgba(255, 255, 255, 0.5);
+            outline-offset: 2px;
+        }
+
+        .toggle-label {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
         }
 
         .dot {
@@ -500,15 +561,15 @@
             width: 34px;
             height: 34px;
             padding: 0;
-            border: 1px solid rgba(217, 162, 255, 0.40);
+            border: 1px solid rgba(255, 148, 77, 0.36);
             border-radius: 8px;
-            background: rgba(217, 162, 255, 0.12);
+            background: rgba(255, 148, 77, 0.12);
             color: rgba(255, 255, 255, 0.9);
             cursor: pointer;
         }
 
         .maplibregl-ctrl-group button.locate-button:not(:disabled):hover {
-            background: rgba(217, 162, 255, 0.18);
+            background: rgba(255, 148, 77, 0.18);
         }
 
         .locate-button svg {
@@ -523,7 +584,7 @@
         }
 
         .locate-button.is-error {
-            color: #D9A2FF;
+            color: #FF944D;
         }
 
         @keyframes locate-pulse {
@@ -552,12 +613,138 @@
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
         }
 
+        /* The popup is a two-sided card: facts on the front, the UNESCO description on
+           the back. Perspective lives on the popup shell so the flip reads as a rotation
+           rather than a horizontal squash. */
+        .maplibregl-popup-content {
+            perspective: 1200px;
+        }
+
+        .popup-flip {
+            position: relative;
+            transform-style: preserve-3d;
+            transition: transform 460ms cubic-bezier(0.2, 0.75, 0.3, 1),
+                height 460ms cubic-bezier(0.2, 0.75, 0.3, 1);
+        }
+
+        .popup-flip.is-flipped {
+            transform: rotateY(180deg);
+        }
+
+        .popup-flip-face {
+            backface-visibility: hidden;
+            -webkit-backface-visibility: hidden;
+            transition: opacity 0s linear 230ms, visibility 0s linear 230ms;
+        }
+
+        .popup-flip-back {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            transform: rotateY(180deg);
+            display: flex;
+            flex-direction: column;
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
+        }
+
+        .popup-flip.is-flipped .popup-flip-back {
+            opacity: 1;
+            visibility: visible;
+            pointer-events: auto;
+        }
+
+        /* Flipped away: the front must not show through, nor swallow clicks. */
+        .popup-flip.is-flipped .popup-flip-front {
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+
+            .popup-flip,
+            .popup-flip-face {
+                transition: none;
+            }
+        }
+
+        .popup-info-btn {
+            appearance: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 15px;
+            height: 15px;
+            margin-left: 5px;
+            padding: 0;
+            vertical-align: 1px;
+            border: 1px solid rgba(255, 255, 255, 0.35);
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.08);
+            color: rgba(255, 255, 255, 0.85);
+            font: 700 10px/1 'Open Sans', sans-serif;
+            cursor: pointer;
+            transition: background 140ms ease, border-color 140ms ease;
+        }
+
+        .popup-info-btn:hover {
+            background: rgba(255, 255, 255, 0.18);
+            border-color: rgba(255, 255, 255, 0.55);
+        }
+
+        .popup-back-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .popup-back-btn {
+            appearance: none;
+            flex-shrink: 0;
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            border-radius: 7px;
+            background: rgba(255, 255, 255, 0.08);
+            color: rgba(255, 255, 255, 0.9);
+            font: 700 12px/1 'Open Sans', sans-serif;
+            padding: 5px 8px;
+            cursor: pointer;
+        }
+
+        .popup-back-btn:hover {
+            background: rgba(255, 255, 255, 0.16);
+        }
+
+        .popup-back-title {
+            font-size: 12px;
+            font-weight: 700;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
         .popup-description {
             display: block;
-            margin: 6px 0 4px;
-            color: rgba(255, 255, 255, 0.62);
+            overflow-y: auto;
+            flex: 1;
+            min-height: 0;
+            padding-right: 4px;
+            color: rgba(255, 255, 255, 0.78);
             font-size: 11px;
-            line-height: 1.55;
+            line-height: 1.6;
+        }
+
+        .popup-description::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .popup-description::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.18);
+            border-radius: 3px;
         }
 
         .maplibregl-popup-anchor-bottom .maplibregl-popup-tip {
@@ -577,6 +764,38 @@
         .popup-image-wrap {
             position: relative;
             margin: 0 0 10px;
+        }
+
+        /* UNESCO ships a caption for the main photo only. Kept off the card until hover
+           so it never competes with the site's own facts; the full text is also on the
+           image's title attribute, for the few captions too long to fit. */
+        .popup-image-caption {
+            position: absolute;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            max-height: 100%;
+            overflow: hidden;
+            padding: 14px 9px 7px;
+            box-sizing: border-box;
+            border-radius: 0 0 7px 7px;
+            background: linear-gradient(to top, rgba(4, 2, 20, 0.94) 35%, rgba(4, 2, 20, 0));
+            color: rgba(255, 255, 255, 0.92);
+            font-size: 10px;
+            line-height: 1.45;
+            display: -webkit-box;
+            -webkit-line-clamp: 5;
+            -webkit-box-orient: vertical;
+            opacity: 0;
+            transition: opacity 170ms ease;
+            pointer-events: none;
+        }
+
+        /* Hover only. `:focus-within` would pin the caption open for good, since the
+           slide arrows live inside the wrap and keep focus after a click; the caption is
+           also on the image's title attribute, which covers the non-pointer path. */
+        .popup-image-wrap:hover .popup-image-caption {
+            opacity: 1;
         }
 
         .popup-species-image {
@@ -846,8 +1065,14 @@
                                     class="dot dot-natural"></span> Natural</label>
                             <label><input type="checkbox" name="category-filter" value="Mixed"><span
                                     class="dot dot-mixed"></span> Mixed</label>
-                            <label><input type="checkbox" name="category-filter" value="Danger"><span
-                                    class="dot dot-danger"></span> In danger</label>
+                        </div>
+                        <div class="filter-group" data-filter-group="danger">
+                            <div class="filter-title">World Heritage in Danger</div>
+                            <label class="filter-toggle">
+                                <input id="danger-toggle" type="checkbox" class="toggle-input">
+                                <span class="toggle-track"><span class="toggle-knob"></span></span>
+                                <span class="toggle-label"><span class="dot dot-danger"></span> In danger only</span>
+                            </label>
                         </div>
                         <div class="filter-group" data-filter-group="region">
                             <div class="filter-title">Region</div>
@@ -920,17 +1145,15 @@
                             <p>
                                 <span class="method-step">3. Popularity and images</span>Name size and weight come from
                                 Wikipedia pageviews (human traffic only) over the last completed year. More-viewed
-                                sites appear earlier; zooming in reveals less-viewed ones. Sites without a resolved
-                                Wikipedia article, or with 0 views in a year, get 1 view so that they still appear, at
-                                the smallest size. Photos come from the UNESCO photo gallery published with each
-                                property record, with Wikipedia and Wikidata images as a fallback.
+                                sites appear earlier; zooming in reveals less-viewed ones. Photos come from the
+                                UNESCO photo gallery published with each property record.
                             </p>
 
                             <span class="data-credit">
                                 <sup>1</sup>Site data &copy; UNESCO World Heritage Centre, from the official
-                                <a href="https://whc.unesco.org/en/syndication" target="_blank"
-                                    rel="noopener noreferrer">World Heritage List export</a>
-                                (<span id="data-version">whc001</span>). Photos &copy; their respective authors, as
+                                <a href="https://data.unesco.org/explore/assets/whc001/export/" target="_blank"
+                                    rel="noopener noreferrer">World Heritage List export</a>,
+                                downloaded 16 September 2026. Photos &copy; their respective authors, as
                                 credited in each popup.
                             </span>
                         </div>
@@ -1361,6 +1584,9 @@
         const siteLayerIds = ['sites-dots', 'sites-labels'];
         const selectedCategories = new Set();
         const selectedRegions = new Set();
+        // Independent of category: an in-danger property is still Cultural, Natural or Mixed,
+        // so the toggle narrows whatever category selection is active rather than replacing it.
+        let dangerOnly = false;
 
         function getChoiceFilter(propertyName, selectedValues) {
             return selectedValues.size
@@ -1512,7 +1738,8 @@
 
         function getSiteFilter() {
             const filters = [
-                getChoiceFilter('color_key', selectedCategories),
+                getChoiceFilter('category', selectedCategories),
+                dangerOnly ? ['==', ['get', 'in_danger'], true] : null,
                 getChoiceFilter('region', selectedRegions),
                 getSearchFilter()
             ].filter(Boolean);
@@ -1537,7 +1764,8 @@
         function featureMatchesCurrentFilters(feature) {
             const props = feature.properties || {};
             if (SHOW_MAIN_POINT_ONLY && (props.label_rank ?? 1) !== 1) return false;
-            if (selectedCategories.size && !selectedCategories.has(props.color_key)) return false;
+            if (selectedCategories.size && !selectedCategories.has(props.category)) return false;
+            if (dangerOnly && props.in_danger !== true) return false;
             if (selectedRegions.size && !selectedRegions.has(props.region)) return false;
             if (!featureMatchesSearch(feature)) return false;
             return true;
@@ -1657,17 +1885,31 @@
             return String(value || '').split(',').map(v => v.trim()).filter(Boolean);
         }
 
+        // The export often repeats the same name in both columns ("Museum Mors" / "Museum
+        // Mors"); printing it twice would read as an error, so identical values collapse.
+        function formatPhotoCredit(author, copyright) {
+            const photographer = hasDisplayValue(author) ? String(author).trim() : '';
+            const rights = hasDisplayValue(copyright) ? String(copyright).trim() : '';
+            if (photographer && rights) {
+                return photographer.toLowerCase() === rights.toLowerCase()
+                    ? `\u00A9 ${rights}`
+                    : `${photographer} \u00B7 \u00A9 ${rights}`;
+            }
+            const single = photographer || rights;
+            return single ? (rights ? `\u00A9 ${single}` : single) : null;
+        }
+
+        // Dots read well up to a dozen photos; past that a counter is the only legible option.
+        const SLIDE_DOTS_MAX = 12;
+
+        function slideIndicator(index, total) {
+            if (total > SLIDE_DOTS_MAX) return `${index + 1} / ${total}`;
+            return Array.from({ length: total }, (_, i) => (i === index ? '\u25CF' : '\u25CB')).join(' ');
+        }
+
         // Short descriptions carry occasional inline HTML (<em>, <p>) from the UNESCO CMS.
         function stripTags(value) {
             return String(value || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-        }
-
-        function truncateText(value, maxLength) {
-            const text = String(value || '').trim();
-            if (text.length <= maxLength) return text;
-            const cut = text.slice(0, maxLength);
-            const lastSpace = cut.lastIndexOf(' ');
-            return `${(lastSpace > maxLength * 0.6 ? cut.slice(0, lastSpace) : cut).replace(/[\s,;:.]+$/, '')}…`;
         }
 
         function wikipediaUrlFromProject(project, title) {
@@ -1678,9 +1920,9 @@
         }
 
         function paintGlobeStyleLayers() {
-            const ocean = '#4D106F';
-            const land = '#A538F0';
-            const boundary = '#DC83EF';
+            const ocean = '#17106f';
+            const land = '#3d38f0';
+            const boundary = '#9f83ef';
 
             if (!map.getSource('globe-land')) {
                 map.addSource('globe-land', {
@@ -1731,7 +1973,7 @@
                 } else if (layer.type === 'line') {
                     const isBoundary = /boundary|admin|country|border/.test(layerKey);
                     try { map.setPaintProperty(layer.id, 'line-opacity', isBoundary ? 0.42 : 0.16); } catch (e) { }
-                    try { map.setPaintProperty(layer.id, 'line-color', isBoundary ? boundary : '#9F51C8'); } catch (e) { }
+                    try { map.setPaintProperty(layer.id, 'line-color', isBoundary ? boundary : '#5c51c8'); } catch (e) { }
                 } else if (layer.type === 'symbol') {
                     try { map.setLayoutProperty(layer.id, 'visibility', 'none'); } catch (e) { }
                 }
@@ -1864,7 +2106,7 @@
                 },
                 paint: {
                     'text-color': '#ffffff',
-                    'text-halo-color': 'rgba(16, 2, 24, 0.74)',
+                    'text-halo-color': 'rgba(4, 2, 24, 0.72)',
                     'text-halo-width': 0.55,
                     'text-halo-blur': 0.1
                 }
@@ -1886,7 +2128,21 @@
         setupMultiSelectFilter('category-filter', selectedCategories, applySiteFilter);
         setupMultiSelectFilter('region-filter', selectedRegions, applySiteFilter);
 
+        const dangerToggle = document.getElementById('danger-toggle');
+        if (dangerToggle) {
+            dangerToggle.addEventListener('change', () => {
+                dangerOnly = dangerToggle.checked;
+                applySiteFilter();
+            });
+        }
+
         const popup = new maplibregl.Popup({ closeButton: true, maxWidth: '300px' });
+        // Rebound on every popup; goTo() relies on the handlers staying attached to the <img>.
+        let fitPopupImage = () => { };
+        let hidePopupImage = () => { };
+        let syncFlipHeight = () => { };
+        // Tallest the description face may grow before its text starts scrolling instead.
+        const POPUP_BACK_MAX_HEIGHT = 260;
         const neonColor = { Cultural: '#FFC24D', Natural: '#5CE68A', Mixed: '#4DD9FF', Danger: '#FF4D5E' };
         const categoryLabel = { Cultural: 'Cultural', Natural: 'Natural', Mixed: 'Mixed (cultural & natural)', Danger: 'In danger' };
 
@@ -1895,9 +2151,9 @@
             const {
                 site_id, label, category, color_key, in_danger, region, states, iso_codes,
                 date_inscribed, criteria, area_hectares, short_description, component_count,
-                unesco_url, image_url, extra_image_urls, image_credit, image_source,
-                wiki_title, wiki_project, wiki_url, wikidata_url,
-                wikidata_image_url, wikipedia_thumbnail_url, popularity
+                unesco_url, image_url, extra_image_urls, image_author, image_copyright,
+                image_caption, image_source,
+                wiki_title, wiki_project, wiki_url, wikidata_url, popularity
             } = feature.properties || {};
             const coords = feature.geometry && feature.geometry.coordinates;
             if (!Array.isArray(coords) || coords.length < 2) return;
@@ -1909,30 +2165,39 @@
             const popularityNumber = Number(popularity);
             const formattedPopularity = Number.isFinite(popularityNumber) ? popularityNumber.toLocaleString() : 'n/a';
 
-            // UNESCO gallery photos first (that's the property's own record), then Wikipedia/Wikidata.
+            // Every photo comes from the property's own UNESCO record: the main image,
+            // then its whole gallery. A gallery can run to 145 photos, so slides are
+            // built cheaply and only the neighbours of the current one are preloaded.
+            // Author / copyright / caption describe the main photo; gallery photos have none.
+            const photoCredit = formatPhotoCredit(image_author, image_copyright);
             const slides = [];
             const seen = new Set();
-            const pushSlide = (url, creditUrl, slideLabel, credit) => {
+            const pushSlide = (url, isPrimary) => {
                 const safe = safeExternalUrl(url);
                 if (!safe || seen.has(safe)) return;
                 seen.add(safe);
-                slides.push({ url: safe, creditUrl: safeExternalUrl(creditUrl) || safe, label: slideLabel, credit: credit || null });
+                slides.push({
+                    url: safe,
+                    creditUrl: unescoHref || safe,
+                    label: 'UNESCO ©',
+                    credit: isPrimary ? photoCredit : null,
+                    caption: isPrimary && hasDisplayValue(image_caption) ? String(image_caption).trim() : ''
+                });
             };
-            pushSlide(image_url, unescoHref, image_source === 'UNESCO' ? 'UNESCO ©' : 'Image', image_credit);
-            parseUrlList(extra_image_urls).forEach(url => pushSlide(url, unescoHref, 'UNESCO ©', image_credit));
-            pushSlide(wikipedia_thumbnail_url, wikiHref, 'Wikipedia', null);
-            pushSlide(wikidata_image_url, wikidata_image_url, 'Wikidata', null);
+            pushSlide(image_url, true);
+            parseUrlList(extra_image_urls).forEach(url => pushSlide(url, false));
 
             const hasSlides = slides.length > 0;
             const imageHtml = hasSlides ? `
-                <div class="popup-image-wrap">
-                    <img class="popup-species-image" id="popup-slide-img" src="${escapeHtml(slides[0].url)}" alt="${escapeHtml(siteName)}" referrerpolicy="no-referrer" loading="lazy" onload="const _r=this.naturalWidth/this.naturalHeight;if(_r>2.2){this.classList.add('is-ultrawide')}else if(_r<0.4){this.classList.add('is-ultranarrow')}else if(_r<1){this.classList.add('is-portrait')}else{this.style.height=Math.min(220,Math.round(this.clientWidth*this.naturalHeight/this.naturalWidth))+'px'}" onerror="this.style.display='none'">
+                <div class="popup-image-wrap" id="popup-image-wrap">
+                    <img class="popup-species-image" id="popup-slide-img" src="${escapeHtml(slides[0].url)}" alt="${escapeHtml(siteName)}" title="${escapeHtml(slides[0].caption)}" referrerpolicy="no-referrer" loading="lazy">
+                    <span class="popup-image-caption" id="popup-slide-caption"${slides[0].caption ? '' : ' hidden'}>${escapeHtml(slides[0].caption)}</span>
                     ${slides.length > 1 ? `
                         <button class="popup-slide-btn popup-slide-prev">&#8249;</button>
                         <button class="popup-slide-btn popup-slide-next">&#8250;</button>
                     ` : ''}
                 </div>
-                ${slides.length > 1 ? `<div class="popup-slide-dots" id="popup-slide-dots">${slides.map((_, i) => i === 0 ? '●' : '○').join(' ')}</div>` : ''}
+                ${slides.length > 1 ? `<div class="popup-slide-dots" id="popup-slide-dots">${slideIndicator(0, slides.length)}</div>` : ''}
             ` : '';
 
             const statesHtml = hasDisplayValue(states)
@@ -1952,8 +2217,10 @@
             const componentsHtml = Number.isFinite(componentsNumber) && componentsNumber > 1
                 ? `<span style="color:rgba(255,255,255,0.7)">Serial property: ${componentsNumber.toLocaleString()} components</span><br>`
                 : '';
-            const descriptionHtml = hasDisplayValue(short_description)
-                ? `<span class="popup-description">${escapeHtml(truncateText(stripTags(short_description), 260))}</span>`
+            const descriptionText = hasDisplayValue(short_description) ? stripTags(short_description) : '';
+            const infoButtonHtml = descriptionText
+                ? `<button class="popup-info-btn" id="popup-info-btn" type="button" aria-label="Read the description"
+                        title="Read the description" aria-expanded="false">i</button>`
                 : '';
 
             const sourceLinks = [
@@ -1963,31 +2230,117 @@
                 slides[0] ? `<a id="popup-img-credit" href="${escapeHtml(slides[0].creditUrl)}" target="_blank" rel="noopener noreferrer">${slides[0].label}</a>` : '',
             ].filter(Boolean).join(' <span aria-hidden="true">|</span> ');
             const creditLine = slides[0] && slides[0].credit
-                ? `<span class="popup-image-source" style="display:block;margin-top:3px" id="popup-img-attr">${escapeHtml(slides[0].credit)}</span>`
-                : '<span id="popup-img-attr"></span>';
+                ? `<span class="popup-image-source" style="display:block;margin-top:3px" id="popup-img-attr">Photo: ${escapeHtml(slides[0].credit)}</span>`
+                : '<span class="popup-image-source" style="display:block;margin-top:3px" id="popup-img-attr"></span>';
             const imageSourceHtml = sourceLinks
                 ? `<span class="popup-image-source">${sourceLinks}</span>${creditLine}`
                 : '';
 
             const titleHref = unescoHref || wikiHref;
             popup.setLngLat(coords).setHTML(`
-                ${imageHtml}
-                <b style="font-size:14px">
-                    ${titleHref
-                    ? `<a href="${escapeHtml(titleHref)}" target="_blank" rel="noopener noreferrer" style="color:${color}; text-decoration:underline">${escapeHtml(siteName)}</a>`
-                    : `<span style="color:${color}">${escapeHtml(siteName)}</span>`}
-                </b><br>
-                <span style="color:${color}; font-weight:bold">&#9679; ${escapeHtml(categoryLabel[color_key] || category || 'Unknown category')}</span>${date_inscribed ? ` <span style="color:rgba(255,255,255,0.5)">(inscribed ${escapeHtml(String(date_inscribed))})</span>` : ''}<br>
-                ${in_danger && color_key === 'Danger' && category ? `<span style="color:rgba(255,255,255,0.78)">${escapeHtml(String(category))} property</span><br>` : ''}
-                ${statesHtml}
-                ${regionHtml}
-                ${criteriaHtml}
-                ${areaHtml}
-                ${componentsHtml}
-                ${descriptionHtml}
-                <span style="color:rgba(255,255,255,0.6); font-size:11px">Wikipedia views/yr: ${formattedPopularity}</span>
-                ${imageSourceHtml}
+                <div class="popup-flip" id="popup-flip">
+                    <div class="popup-flip-face popup-flip-front">
+                        ${imageHtml}
+                        <b style="font-size:14px">
+                            ${titleHref
+                        ? `<a href="${escapeHtml(titleHref)}" target="_blank" rel="noopener noreferrer" style="color:${color}; text-decoration:underline">${escapeHtml(siteName)}</a>`
+                        : `<span style="color:${color}">${escapeHtml(siteName)}</span>`}${infoButtonHtml}
+                        </b><br>
+                        <span style="color:${color}; font-weight:bold">&#9679; ${escapeHtml(categoryLabel[color_key] || category || 'Unknown category')}</span>${date_inscribed ? ` <span style="color:rgba(255,255,255,0.5)">(inscribed ${escapeHtml(String(date_inscribed))})</span>` : ''}<br>
+                        ${in_danger && color_key === 'Danger' && category ? `<span style="color:rgba(255,255,255,0.78)">${escapeHtml(String(category))} property</span><br>` : ''}
+                        ${statesHtml}
+                        ${regionHtml}
+                        ${criteriaHtml}
+                        ${areaHtml}
+                        ${componentsHtml}
+                        <span style="color:rgba(255,255,255,0.6); font-size:11px">Wikipedia views/yr: ${formattedPopularity}</span>
+                        ${imageSourceHtml}
+                    </div>
+                    ${descriptionText ? `
+                        <div class="popup-flip-back" aria-hidden="true">
+                            <div class="popup-back-header">
+                                <button class="popup-back-btn" id="popup-back-btn" type="button"
+                                    aria-label="Back to the site details">&larr;</button>
+                                <span class="popup-back-title" style="color:${color}">${escapeHtml(siteName)}</span>
+                            </div>
+                            <span class="popup-description">${escapeHtml(descriptionText)}</span>
+                        </div>
+                    ` : ''}
+                </div>
             `).addTo(map);
+
+            // The two faces are stacked, so the card needs one height that suits both:
+            // the front's natural height, or a capped slice of the back with the text
+            // scrolling inside it. Re-run whenever the photo resizes the front.
+            const flip = popup.getElement().querySelector('#popup-flip');
+            const infoButton = popup.getElement().querySelector('#popup-info-btn');
+            const backButton = popup.getElement().querySelector('#popup-back-btn');
+            const frontFace = flip && flip.querySelector('.popup-flip-front');
+            const backFace = flip && flip.querySelector('.popup-flip-back');
+
+            // The back is absolutely positioned, so the card carries the height. Rather than
+            // reserving the taller of the two faces and leaving the short one padded with
+            // dead space, the height animates alongside the rotation.
+            const measureBackHeight = () => {
+                if (!backFace) return 0;
+                backFace.style.height = 'auto';
+                const natural = backFace.scrollHeight;
+                backFace.style.height = '';
+                return Math.min(natural, POPUP_BACK_MAX_HEIGHT);
+            };
+
+            syncFlipHeight = () => {
+                if (!flip || !frontFace) return;
+                const showingBack = flip.classList.contains('is-flipped');
+                flip.style.height = '';
+                const frontHeight = frontFace.offsetHeight;
+                flip.style.height = `${showingBack ? measureBackHeight() : frontHeight}px`;
+            };
+
+            if (infoButton && backFace) {
+                const setFlipped = (flipped) => {
+                    flip.classList.toggle('is-flipped', flipped);
+                    infoButton.setAttribute('aria-expanded', String(flipped));
+                    backFace.setAttribute('aria-hidden', String(!flipped));
+                    if (flipped) backFace.querySelector('.popup-description').scrollTop = 0;
+                    syncFlipHeight();
+                };
+                infoButton.addEventListener('click', (e) => { e.stopPropagation(); setFlipped(true); });
+                if (backButton) {
+                    backButton.addEventListener('click', (e) => { e.stopPropagation(); setFlipped(false); });
+                }
+            }
+
+            // Size the photo to its own aspect ratio, and collapse the whole image block
+            // when the photo cannot be loaded — UNESCO's host may refuse a hotlink, and a
+            // grey box with nav arrows in it is worse than no photo at all.
+            if (hasSlides) {
+                const el = popup.getElement();
+                const img = el.querySelector('#popup-slide-img');
+                const wrap = el.querySelector('#popup-image-wrap');
+                const counter = el.querySelector('#popup-slide-dots');
+
+                fitPopupImage = () => {
+                    const ratio = img.naturalWidth / img.naturalHeight;
+                    img.classList.remove('is-portrait', 'is-ultrawide', 'is-ultranarrow');
+                    img.style.height = '';
+                    if (ratio > 2.2) img.classList.add('is-ultrawide');
+                    else if (ratio < 0.4) img.classList.add('is-ultranarrow');
+                    else if (ratio < 1) img.classList.add('is-portrait');
+                    else img.style.height = Math.min(220, Math.round(img.clientWidth * img.naturalHeight / img.naturalWidth)) + 'px';
+                    syncFlipHeight();
+                };
+                hidePopupImage = () => {
+                    if (wrap) wrap.hidden = true;
+                    if (counter) counter.hidden = true;
+                    syncFlipHeight();
+                };
+                img.onload = fitPopupImage;
+                img.onerror = hidePopupImage;
+                if (img.complete && img.naturalWidth) fitPopupImage();
+            }
+
+            syncFlipHeight();
 
             // Wire up slideshow navigation
             if (slides.length > 1) {
@@ -1997,28 +2350,30 @@
                 const creditLink = el.querySelector('#popup-img-credit');
                 const attrSpan = el.querySelector('#popup-img-attr');
                 const dots = el.querySelector('#popup-slide-dots');
+                const caption = el.querySelector('#popup-slide-caption');
 
-                // Preload all non-primary slide images in the background
-                slides.slice(1).forEach(slide => { if (slide.url) { const _p = new Image(); _p.src = slide.url; } });
+                // Preload only the neighbours: a 145-photo gallery must not fire 145 requests.
+                const preload = (position) => {
+                    const slide = slides[(position + slides.length) % slides.length];
+                    if (slide && slide.url) { const image = new Image(); image.src = slide.url; }
+                };
+                preload(1);
+                preload(-1);
 
                 const goTo = (newIdx) => {
                     idx = (newIdx + slides.length) % slides.length;
                     const slide = slides[idx];
-                    img.classList.remove('is-portrait', 'is-ultrawide', 'is-ultranarrow');
-                    img.style.display = '';
-                    img.style.height = '';
-                    img.onload = () => {
-                        const _r = img.naturalWidth / img.naturalHeight;
-                        if (_r > 2.2) img.classList.add('is-ultrawide');
-                        else if (_r < 0.4) img.classList.add('is-ultranarrow');
-                        else if (_r < 1) img.classList.add('is-portrait');
-                        else img.style.height = Math.min(220, Math.round(img.clientWidth * img.naturalHeight / img.naturalWidth)) + 'px';
-                    };
-                    img.onerror = () => { img.style.display = 'none'; };
                     img.src = slide.url;
+                    img.title = slide.caption || '';
+                    if (caption) {
+                        caption.textContent = slide.caption || '';
+                        caption.hidden = !slide.caption;
+                    }
                     if (creditLink) { creditLink.href = slide.creditUrl; creditLink.textContent = slide.label; }
-                    if (attrSpan) attrSpan.textContent = slide.credit || '';
-                    if (dots) dots.innerHTML = slides.map((_, i) => i === idx ? '●' : '○').join(' ');
+                    if (attrSpan) attrSpan.textContent = slide.credit ? `Photo: ${slide.credit}` : '';
+                    if (dots) dots.textContent = slideIndicator(idx, slides.length);
+                    preload(idx + 1);
+                    preload(idx - 1);
                 };
 
                 el.querySelector('.popup-slide-prev').addEventListener('click', (e) => { e.stopPropagation(); goTo(idx - 1); });

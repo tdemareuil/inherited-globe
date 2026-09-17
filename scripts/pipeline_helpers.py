@@ -35,7 +35,6 @@ WIKIDATA_ENDPOINT = "https://query.wikidata.org/sparql"
 WIKIDATA_API_URL = "https://www.wikidata.org/w/api.php"
 PAGEVIEWS_BASE = "https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article"
 PAGEVIEWS_AGENT = "user"  # "user" = human only, "all-agents" = humans + bots
-WIKIPEDIA_SUMMARY_URL = "https://{project}/api/rest_v1/page/summary/{title}"
 UNESCO_SITE_URL = "https://whc.unesco.org/en/list/{site_id}"
 START = ""
 END = ""
@@ -55,7 +54,6 @@ WIKIDATA_FIELDS = [
     "wiki_project",
     "wiki_url",
     "wikidata_url",
-    "wikidata_image_url",
 ]
 
 # UNESCO's five programme regions, as written in the official export.
@@ -339,9 +337,12 @@ def site_label_points(main_lat, main_lon, components, buffer_km, max_points,
 
     - No components: the official site coordinates are the only point.
     - Components: they are clustered by distance. The largest cluster always gets a
-      point (snapped to the official coordinates when those fall inside it), then
-      secondary clusters get one only if they hold at least `secondary_min_share` of
-      the components, capped at `max_points`.
+      point — the centroid (spherical mean) of its components, snapped to the official
+      coordinates when those fall inside it. Secondary clusters get a point only if
+      they hold at least `secondary_min_share` of the components, capped at `max_points`.
+
+    A property with no published coordinates is therefore placed on a computed centroid,
+    never dropped, as long as it publishes at least one component.
     """
     has_main = main_lat is not None and main_lon is not None
     if not components:
@@ -373,7 +374,7 @@ def site_label_points(main_lat, main_lon, components, buffer_km, max_points,
             source = "site_coordinates"
         else:
             lat, lon = mean_position(members)
-            source = "component_cluster"
+            source = "component_centroid"
         label_points.append(
             {
                 "lat": lat,
@@ -444,10 +445,9 @@ def build_sparql_query(whc_ids):
     """Batch SPARQL: resolve UNESCO World Heritage site IDs to sitelinks and images."""
     values = " ".join(f'"{i}"' for i in whc_ids)
     return f"""
-SELECT ?whc_id ?item ?article ?article_lang ?wiki_project ?article_title ?wikidata_image_url WHERE {{
+SELECT ?whc_id ?item ?article ?article_lang ?wiki_project ?article_title WHERE {{
   VALUES ?whc_id {{ {values} }}
   ?item wdt:P757 ?whc_id .             # P757 = World Heritage Site ID
-  OPTIONAL {{ ?item wdt:P18 ?wikidata_image_url . }}   # P18 = image
   ?article schema:about ?item ;
             schema:inLanguage ?article_lang ;
             schema:isPartOf ?wiki_site .
@@ -464,9 +464,8 @@ def build_sparql_qid_query(qids):
     """SPARQL to get Wikipedia sitelinks for a known list of Wikidata QIDs."""
     values = " ".join(f"wd:{qid}" for qid in qids)
     return f"""
-SELECT ?item ?article ?article_lang ?wiki_project ?article_title ?wikidata_image_url WHERE {{
+SELECT ?item ?article ?article_lang ?wiki_project ?article_title WHERE {{
   VALUES ?item {{ {values} }}
-  OPTIONAL {{ ?item wdt:P18 ?wikidata_image_url . }}
   ?article schema:about ?item ;
             schema:inLanguage ?article_lang ;
             schema:isPartOf ?wiki_site .
@@ -481,7 +480,6 @@ SELECT ?item ?article ?article_lang ?wiki_project ?article_title ?wikidata_image
 
 def _entry_from_sparql_row(row, item_key="item"):
     """Build a wikidata_map entry dict from one SPARQL result row."""
-    image = (row.get("wikidata_image_url") or {}).get("value")
     return {
         "wikidata_url": row[item_key]["value"].replace("http://", "https://", 1),
         "wiki_title": urllib.parse.unquote(row["article_title"]["value"]),
@@ -489,7 +487,6 @@ def _entry_from_sparql_row(row, item_key="item"):
         "wiki_project": row["wiki_project"]["value"],
         "wiki_url": row["article"]["value"],
         "wiki_rank": article_rank(row["article_lang"]["value"]),
-        "wikidata_image_url": image.replace("http://", "https://", 1) if image else None,
         "wiki_lookup_source": "wikidata_P757",
     }
 
@@ -505,8 +502,6 @@ def _merge_entry(mapping, key, candidate):
             k: candidate[k]
             for k in ("wiki_title", "wiki_language", "wiki_project", "wiki_url", "wiki_rank")
         })
-    if candidate.get("wikidata_image_url") and not existing.get("wikidata_image_url"):
-        existing["wikidata_image_url"] = candidate["wikidata_image_url"]
 
 
 def _post_sparql(sparql, retries=4, timeout=90):
@@ -634,7 +629,6 @@ def wikipedia_direct_search(search_term, lang="en", retries=3):
             "wiki_project": project,
             "wiki_url": f"https://{project}/wiki/{urllib.parse.quote(title.replace(' ', '_'))}",
             "wikidata_url": None,
-            "wikidata_image_url": None,
             "wiki_rank": article_rank(lang),
             "wiki_lookup_source": f"wikipedia_direct_{lang}",
         }
@@ -740,7 +734,11 @@ def attach_wikidata_fields(frame, mapping, id_col="site_id"):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 4. Wikimedia pageviews & images
+# 4. Wikimedia pageviews
+#
+# Images are NOT fetched from Wikimedia. Every photo shown on the globe comes from the
+# UNESCO export's own `Main Image` and `Images` columns; Wikipedia is used only to size
+# the labels.
 # ══════════════════════════════════════════════════════════════════════════════
 
 def get_pageviews(project, title, retries=4):
@@ -771,49 +769,6 @@ def get_pageviews(project, title, retries=4):
     return 0
 
 
-def get_wikipedia_thumbnail(project, title, retries=4):
-    """Return a Wikipedia thumbnail/original image URL for a page title, or None."""
-    if not clean_str(title):
-        return None
-    project = project or "en.wikipedia.org"
-    url = WIKIPEDIA_SUMMARY_URL.format(project=project, title=urllib.parse.quote(str(title), safe=""))
-    for attempt in range(retries):
-        try:
-            response = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=20)
-            if response.status_code == 404:
-                return None
-            if response.status_code == 429:
-                wait = wikimedia_retry_after(response, default=2 ** attempt * 5)
-                tqdm.write(f"  [thumbnail] 429 — waiting {wait}s")
-                time.sleep(wait)
-                continue
-            response.raise_for_status()
-            image = pick_path(response.json(), ("originalimage", "source"), ("thumbnail", "source"))
-            return image.replace("http://", "https://", 1) if image else None
-        except requests.exceptions.RequestException:
-            if attempt == retries - 1:
-                return None
-            time.sleep(2 ** attempt * 2)
-    return None
-
-
-def wikimedia_tiff_to_thumbnail(url, width=1000):
-    """Rewrite a Commons TIFF/SVG file URL to a JPEG/PNG thumbnail browsers can display."""
-    text = clean_str(url)
-    if not text:
-        return None
-    lowered = text.lower()
-    if not lowered.endswith((".tif", ".tiff", ".svg")):
-        return text
-    match = re.search(r"/commons/(?:thumb/)?([0-9a-f])/([0-9a-f]{2})/([^/]+)$", text)
-    if not match:
-        return text
-    a, b, filename = match.groups()
-    suffix = "png" if lowered.endswith(".svg") else "jpg"
-    return (f"https://upload.wikimedia.org/wikipedia/commons/thumb/{a}/{b}/{filename}"
-            f"/{width}px-{filename}.{suffix}")
-
-
 # ══════════════════════════════════════════════════════════════════════════════
 # 5. GeoJSON export
 # ══════════════════════════════════════════════════════════════════════════════
@@ -823,15 +778,15 @@ GEOJSON_FIELDS = [
     "site_id", "label", "short_label", "states", "iso_codes", "region",
     "category", "color_key", "in_danger", "date_inscribed", "criteria",
     "area_hectares", "short_description", "component_count",
-    "unesco_url", "image_url", "extra_image_urls", "image_credit", "image_source",
-    "wiki_title", "wiki_language", "wiki_project", "wiki_url",
-    "wikidata_url", "wikidata_image_url", "wikipedia_thumbnail_url",
+    "unesco_url", "image_url", "extra_image_urls", "image_count",
+    "image_author", "image_copyright", "image_caption", "image_source",
+    "wiki_title", "wiki_language", "wiki_project", "wiki_url", "wikidata_url",
     "popularity", "label_rank", "label_count", "point_source",
     "cluster_component_count", "cluster_share",
 ]
 
 INT_FIELDS = {"site_id", "date_inscribed", "component_count", "popularity",
-              "label_rank", "label_count", "cluster_component_count"}
+              "label_rank", "label_count", "cluster_component_count", "image_count"}
 FLOAT_FIELDS = {"area_hectares", "cluster_share"}
 BOOL_FIELDS = {"in_danger"}
 
