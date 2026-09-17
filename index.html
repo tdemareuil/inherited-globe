@@ -709,12 +709,17 @@
             background: rgba(255, 255, 255, 0.16);
         }
 
+        /* Inscription names run long, so the back-face title wraps to a second line
+           rather than being cut off after a few words; past two lines it ellipsises,
+           since the full name is already on the front of the card. */
         .popup-back-title {
             font-size: 12px;
             font-weight: 700;
+            line-height: 1.3;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
             overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
         }
 
         /* The Wikipedia slot is kept in the row even before the pipeline resolves the
@@ -1888,11 +1893,15 @@
 
         // The export often repeats the same name in both columns ("Museum Mors" / "Museum
         // Mors"); printing it twice would read as an error, so identical values collapse.
+        // The two spellings are frequently punctuated differently by hand — "Gael R. Vande
+        // weghe" vs "Gael R.Vande weghe" — so the comparison ignores spacing and dots.
         function formatPhotoCredit(author, copyright) {
             const photographer = hasDisplayValue(author) ? String(author).trim() : '';
             const rights = hasDisplayValue(copyright) ? String(copyright).trim() : '';
+            const sameName = (a, b) =>
+                a.toLowerCase().replace(/[\s.]+/g, '') === b.toLowerCase().replace(/[\s.]+/g, '');
             if (photographer && rights) {
-                return photographer.toLowerCase() === rights.toLowerCase()
+                return sameName(photographer, rights)
                     ? `\u00A9 ${rights}`
                     : `${photographer} \u00B7 \u00A9 ${rights}`;
             }
@@ -2151,7 +2160,7 @@
             if (!feature) return;
             const {
                 site_id, label, category, color_key, in_danger, states,
-                date_inscribed, area_hectares, short_description,
+                date_inscribed, short_description,
                 unesco_url, image_url, extra_image_urls, image_author, image_copyright,
                 image_caption, image_source,
                 wiki_title, wiki_project, wiki_url, wikidata_url, popularity
@@ -2202,10 +2211,6 @@
             const statesHtml = hasDisplayValue(states)
                 ? `<span style="color:rgba(255,255,255,0.78)">${escapeHtml(String(states))}</span><br>`
                 : '';
-            const areaNumber = Number(area_hectares);
-            const areaHtml = Number.isFinite(areaNumber) && areaNumber > 0
-                ? `<span style="color:rgba(255,255,255,0.7)">Area: ${Math.round(areaNumber).toLocaleString()} ha</span><br>`
-                : '';
             const descriptionText = hasDisplayValue(short_description) ? stripTags(short_description) : '';
             const infoButtonHtml = descriptionText
                 ? `<button class="popup-info-btn" id="popup-info-btn" type="button" aria-label="Read the description"
@@ -2239,7 +2244,6 @@
                         <span style="color:${color}; font-weight:bold">&#9679; ${escapeHtml(categoryLabel[color_key] || category || 'Unknown category')}</span>${date_inscribed ? ` <span style="color:rgba(255,255,255,0.5)">(inscribed ${escapeHtml(String(date_inscribed))})</span>` : ''}<br>
                         ${in_danger && color_key === 'Danger' && category ? `<span style="color:rgba(255,255,255,0.78)">${escapeHtml(String(category))} property</span><br>` : ''}
                         ${statesHtml}
-                        ${areaHtml}
                         <span style="color:rgba(255,255,255,0.6); font-size:11px">Wikipedia views/yr: ${formattedPopularity}</span>
                         ${imageSourceHtml}
                     </div>
