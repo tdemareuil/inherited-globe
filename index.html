@@ -1,0 +1,2039 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <title>An Inherited Globe</title>
+    <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
+    <link href="https://unpkg.com/maplibre-gl@^5.0.0/dist/maplibre-gl.css" rel="stylesheet">
+    <script src="https://unpkg.com/maplibre-gl@^5.0.0/dist/maplibre-gl.js"></script>
+    <script
+        src="https://cdn.jsdelivr.net/gh/markmclaren/maplibre-gl-starfield@main/maplibre-gl-starfield-0.1.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            background: #0A0010;
+            overflow: hidden;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Plugin containers — behind the WebGL canvas */
+        #starfield-container,
+        #globe-glow {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        #map {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 100%;
+            z-index: 5;
+            background: transparent !important;
+        }
+
+        /* Depth gradient + atmospheric rim rendered above the canvas */
+        #globe-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 6;
+            pointer-events: none;
+        }
+
+        #menu {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            color: #fff;
+            padding: 20px;
+            background: rgba(10, 10, 15, 0.15);
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            font-family: 'Open Sans', sans-serif;
+            font-size: 12px;
+            max-width: 240px;
+            z-index: 10;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+        }
+
+        .menu-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+
+        #menu h2 {
+            margin: 0 0 10px;
+            font-size: 16px;
+            font-weight: 700;
+        }
+
+        .menu-toggle {
+            display: none;
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.08);
+            color: rgba(255, 255, 255, 0.9);
+            font: 700 11px/1 'Open Sans', sans-serif;
+            padding: 8px 10px;
+            cursor: pointer;
+        }
+
+        .menu-body {
+            display: block;
+        }
+
+        #menu p {
+            color: rgba(255, 255, 255, 0.7);
+            line-height: 1.6;
+            margin: 0 0 15px;
+        }
+
+        #menu a {
+            color: #D9A2FF;
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        #menu a:hover {
+            text-decoration: underline;
+        }
+
+        .text-link {
+            appearance: none;
+            border: 0;
+            padding: 0;
+            background: transparent;
+            color: #D9A2FF;
+            font: inherit;
+            font-weight: 600;
+            text-decoration: none;
+            cursor: pointer;
+        }
+
+        .text-link:hover {
+            text-decoration: underline;
+        }
+
+        .menu-viewport {
+            overflow: hidden;
+        }
+
+        .menu-track {
+            display: flex;
+            width: 200%;
+            align-items: stretch;
+            transition: transform 220ms ease;
+        }
+
+        #menu.show-details .menu-track {
+            transform: translateX(-50%);
+        }
+
+        #menu.show-details:not(.menu-collapsed) {
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            width: 282px;
+            max-width: calc(100vw - 30px);
+            height: min(760px, calc(100vh - 30px));
+        }
+
+        #menu.show-details:not(.menu-collapsed) .menu-body,
+        #menu.show-details:not(.menu-collapsed) .menu-viewport,
+        #menu.show-details:not(.menu-collapsed) .menu-track,
+        #menu.show-details:not(.menu-collapsed) .menu-view {
+            min-height: 0;
+        }
+
+        #menu.show-details:not(.menu-collapsed) .menu-body,
+        #menu.show-details:not(.menu-collapsed) .menu-viewport,
+        #menu.show-details:not(.menu-collapsed) .menu-track {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        #menu.show-details:not(.menu-collapsed) .menu-track {
+            flex-direction: row;
+            height: 100%;
+        }
+
+        #menu.show-details:not(.menu-collapsed) .details-copy {
+            max-height: none;
+        }
+
+        .menu-view {
+            box-sizing: border-box;
+            flex: 0 0 50%;
+            max-width: 50%;
+            min-width: 0;
+            overflow-wrap: break-word;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .menu-view+.menu-view {
+            padding-left: 20px;
+        }
+
+        .details-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+
+        .details-back {
+            appearance: none;
+            border: 1px solid rgba(255, 255, 255, 0.16);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.08);
+            color: rgba(255, 255, 255, 0.86);
+            width: 28px;
+            height: 28px;
+            cursor: pointer;
+            font: 700 17px/1 'Open Sans', sans-serif;
+        }
+
+        .details-title {
+            color: rgba(255, 255, 255, 0.9);
+            font-size: 13px;
+            font-weight: 700;
+        }
+
+        .details-copy {
+            flex: 1;
+            min-height: 0;
+            max-height: min(62vh, 520px);
+            overflow-y: auto;
+            padding-right: 6px;
+        }
+
+        .details-copy p {
+            margin-bottom: 10px;
+        }
+
+        .method-step {
+            display: block;
+            margin-bottom: 5px;
+            color: rgba(255, 255, 255, 0.9);
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+
+        .data-credit {
+            display: block;
+            margin-top: 10px;
+            color: rgba(255, 255, 255, 0.52);
+            font-size: 10px;
+            line-height: 1.45;
+        }
+
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 7px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            padding-top: 15px;
+        }
+
+        .filter-group+.filter-group {
+            margin-top: 12px;
+        }
+
+        .filter-title {
+            margin: 0 0 2px;
+            color: rgba(255, 255, 255, 0.55);
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+
+        .filter-group label {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+            color: rgba(255, 255, 255, 0.85);
+        }
+
+        .filter-group input[type="checkbox"] {
+            cursor: pointer;
+            accent-color: #B14DFF;
+            margin: 0;
+        }
+
+        .random-species-button {
+            width: 100%;
+            margin-top: 15px;
+            border: 1px solid rgba(217, 162, 255, 0.40);
+            border-radius: 8px;
+            background: rgba(217, 162, 255, 0.12);
+            color: rgba(255, 255, 255, 0.9);
+            font: 700 12px/1 'Open Sans', sans-serif;
+            padding: 10px 12px;
+            cursor: pointer;
+        }
+
+        .random-species-button:hover {
+            background: rgba(217, 162, 255, 0.18);
+        }
+
+        .search-species-button {
+            margin-top: 8px;
+        }
+
+        /* Same box as the button above it, so swapping the two leaves the panel height untouched */
+        .search-species-field {
+            box-sizing: border-box;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+            min-height: 34px;
+            margin-top: 8px;
+            padding: 0 12px;
+            border: 1px solid rgba(217, 162, 255, 0.40);
+            border-radius: 8px;
+            background: rgba(217, 162, 255, 0.12);
+        }
+
+        /* Author `display` beats the UA [hidden] rule, so restate it here */
+        .search-species-field[hidden],
+        .search-species-results[hidden],
+        .search-species-clear[hidden],
+        .random-species-button[hidden] {
+            display: none;
+        }
+
+        .search-species-wrap {
+            position: relative;
+        }
+
+        /* Opens upward: at the bottom of the panel there is no room below */
+        .search-species-results {
+            --search-row-height: 32px;
+            position: absolute;
+            bottom: 100%;
+            left: 0;
+            right: 0;
+            z-index: 12;
+            max-height: calc(5.5 * var(--search-row-height));
+            margin-bottom: 6px;
+            overflow-y: auto;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 8px;
+            background: rgba(10, 10, 15, 0.94);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+        }
+
+        .search-result {
+            box-sizing: border-box;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+            height: var(--search-row-height);
+            padding: 0 10px;
+            border: 0;
+            background: transparent;
+            color: rgba(255, 255, 255, 0.85);
+            /* line-height must clear the descenders: .search-result-name clips them to its box */
+            font: 600 12px/1.4 'Open Sans', sans-serif;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .search-result:hover,
+        .search-result:focus-visible {
+            background: rgba(217, 162, 255, 0.16);
+            outline: none;
+        }
+
+        .search-result-name {
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            white-space: nowrap;
+            text-overflow: ellipsis;
+        }
+
+        .search-result-sci {
+            color: rgba(255, 255, 255, 0.45);
+            font-style: italic;
+        }
+
+        .search-results-more {
+            display: block;
+            width: 100%;
+            box-sizing: border-box;
+            padding: 8px 10px;
+            border: 0;
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+            background: transparent;
+            color: rgba(255, 255, 255, 0.45);
+            font: italic 600 10px/1.4 'Open Sans', sans-serif;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .search-results-more:hover,
+        .search-results-more:focus-visible {
+            background: rgba(217, 162, 255, 0.12);
+            color: rgba(255, 255, 255, 0.7);
+            outline: none;
+        }
+
+        .search-species-field input {
+            flex: 1;
+            min-width: 0;
+            appearance: none;
+            border: 0;
+            padding: 0;
+            background: transparent;
+            color: rgba(255, 255, 255, 0.9);
+            font: 700 12px/1 'Open Sans', sans-serif;
+            outline: none;
+        }
+
+        .search-species-field input::placeholder {
+            color: rgba(255, 255, 255, 0.5);
+            font-weight: 700;
+        }
+
+        .search-species-clear {
+            appearance: none;
+            border: 0;
+            padding: 0;
+            background: transparent;
+            color: rgba(255, 255, 255, 0.5);
+            font: 700 15px/12px 'Open Sans', sans-serif;
+            cursor: pointer;
+        }
+
+        .search-species-clear:hover {
+            color: rgba(255, 255, 255, 0.9);
+        }
+
+        .search-no-match {
+            color: #D9A2FF;
+        }
+
+        .dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .dot-all {
+            background: #ffffff;
+        }
+
+        .dot-cultural {
+            background: #FFC24D;
+            box-shadow: 0 0 8px #FFC24D;
+        }
+
+        .dot-natural {
+            background: #5CE68A;
+            box-shadow: 0 0 8px #5CE68A;
+        }
+
+        .dot-mixed {
+            background: #4DD9FF;
+            box-shadow: 0 0 8px #4DD9FF;
+        }
+
+        .dot-danger {
+            background: #FF4D5E;
+            box-shadow: 0 0 8px #FF4D5E;
+        }
+
+        .dot-group {
+            background: rgba(255, 255, 255, 0.65);
+            box-shadow: none;
+        }
+
+        /* Locate button — sits above the attribution in the bottom-right control stack.
+           The wrapper carries #menu's base and blur, so the orange button reads exactly like
+           the panel buttons do: same accent fill over the same translucent backdrop. */
+        .maplibregl-ctrl-group.locate-ctrl {
+            border: 0;
+            border-radius: 8px;
+            background: rgba(10, 10, 15, 0.15);
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
+            box-shadow: none;
+        }
+
+        .maplibregl-ctrl-group button.locate-button {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 34px;
+            height: 34px;
+            padding: 0;
+            border: 1px solid rgba(217, 162, 255, 0.40);
+            border-radius: 8px;
+            background: rgba(217, 162, 255, 0.12);
+            color: rgba(255, 255, 255, 0.9);
+            cursor: pointer;
+        }
+
+        .maplibregl-ctrl-group button.locate-button:not(:disabled):hover {
+            background: rgba(217, 162, 255, 0.18);
+        }
+
+        .locate-button svg {
+            display: block;
+            width: 18px;
+            height: 18px;
+        }
+
+        .locate-button.is-busy {
+            cursor: progress;
+            animation: locate-pulse 1s ease-in-out infinite;
+        }
+
+        .locate-button.is-error {
+            color: #D9A2FF;
+        }
+
+        @keyframes locate-pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.35;
+            }
+        }
+
+        .maplibregl-popup-content {
+            background: rgba(10, 10, 15, 0.85);
+            color: white;
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 15px;
+            font-family: 'Open Sans', sans-serif;
+            font-size: 12px;
+            line-height: 1.7;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
+        }
+
+        .popup-description {
+            display: block;
+            margin: 6px 0 4px;
+            color: rgba(255, 255, 255, 0.62);
+            font-size: 11px;
+            line-height: 1.55;
+        }
+
+        .maplibregl-popup-anchor-bottom .maplibregl-popup-tip {
+            border-top-color: rgba(10, 10, 15, 0.85);
+        }
+
+        .maplibregl-popup-anchor-top .maplibregl-popup-tip {
+            border-bottom-color: rgba(10, 10, 15, 0.85);
+        }
+
+        .maplibregl-popup-close-button {
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 16px;
+            padding: 4px 8px;
+        }
+
+        .popup-image-wrap {
+            position: relative;
+            margin: 0 0 10px;
+        }
+
+        .popup-species-image {
+            display: block;
+            width: 100%;
+            height: 128px;
+            object-fit: cover;
+            border-radius: 7px;
+            margin: 0;
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        .popup-species-image.is-ultrawide {
+            object-fit: contain;
+            background: #000;
+            border-radius: 7px;
+        }
+
+        .popup-species-image.is-inat {
+            height: 150px;
+            object-fit: cover;
+        }
+
+        .popup-species-image.is-ultranarrow {
+            width: 100%;
+            height: clamp(180px, 42vh, 260px);
+            object-fit: contain;
+            background: #000;
+            border-radius: 7px;
+        }
+
+        .popup-species-image.is-portrait {
+            width: auto;
+            max-width: 100%;
+            height: clamp(180px, 42vh, 260px);
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .popup-slide-btn {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            background: rgba(0, 0, 0, 0.45);
+            border: none;
+            color: #fff;
+            font-size: 18px;
+            line-height: 1;
+            padding: 5px 8px;
+            cursor: pointer;
+            border-radius: 4px;
+            z-index: 1;
+        }
+
+        .popup-slide-btn:hover {
+            background: rgba(0, 0, 0, 0.72);
+        }
+
+        .popup-slide-prev {
+            left: 5px;
+        }
+
+        .popup-slide-next {
+            right: 5px;
+        }
+
+        .popup-slide-dots {
+            text-align: center;
+            margin-top: 5px;
+            font-size: 9px;
+            color: rgba(255, 255, 255, 0.38);
+            letter-spacing: 3px;
+        }
+
+        .popup-image-source {
+            display: block;
+            margin-top: 4px;
+            color: rgba(255, 255, 255, 0.46);
+            font-size: 10px;
+            line-height: 1.3;
+        }
+
+        .popup-image-source a {
+            color: inherit;
+            text-decoration: underline;
+            text-decoration-color: rgba(255, 255, 255, 0.25);
+        }
+
+        .coverage-figure {
+            margin: 16px 0 12px;
+            padding: 0;
+        }
+
+        .coverage-figure img {
+            display: block;
+            width: 100%;
+            border-radius: 7px;
+            background: #ffffff;
+            padding: 6px;
+            box-sizing: border-box;
+        }
+
+        .coverage-figure figcaption {
+            margin-top: 8px;
+            font-size: 10px;
+            color: rgba(255, 255, 255, 0.46);
+            line-height: 1.5;
+        }
+
+        @media (max-width: 700px) {
+            #menu {
+                top: 10px;
+                left: 10px;
+                right: 10px;
+                max-width: none;
+                padding: 10px 12px;
+                border-radius: 10px;
+                font-size: 12.5px;
+                max-height: calc(100vh - 20px);
+                overflow: hidden;
+            }
+
+            #menu h2 {
+                margin: 0;
+                font-size: 15.5px;
+            }
+
+            .details-title {
+                font-size: 14px;
+            }
+
+            .menu-toggle {
+                display: inline-flex;
+            }
+
+            #menu.menu-collapsed .menu-body {
+                display: none;
+            }
+
+            #menu:not(.menu-collapsed) .menu-body {
+                display: block;
+                max-height: min(68vh, 520px);
+                overflow-y: auto;
+                padding: 10px 2px 2px 0;
+            }
+
+            #menu.show-details:not(.menu-collapsed) {
+                width: auto;
+                max-width: none;
+                display: block;
+                height: auto;
+            }
+
+            #menu.show-details:not(.menu-collapsed) .menu-body {
+                display: block;
+                flex: unset;
+                max-height: min(68vh, 520px);
+                overflow-y: auto;
+                overflow-x: hidden;
+                padding-bottom: 0;
+            }
+
+            #menu.show-details:not(.menu-collapsed) .menu-viewport {
+                display: block;
+                flex: unset;
+                overflow: hidden;
+            }
+
+            #menu.show-details:not(.menu-collapsed) .menu-track {
+                flex: unset;
+                flex-direction: row;
+                height: auto;
+            }
+
+            #menu.show-details:not(.menu-collapsed) .menu-view {
+                flex: 0 0 50%;
+                max-width: 50%;
+            }
+
+            #menu.show-details:not(.menu-collapsed) .details-copy {
+                max-height: none;
+                overflow-y: visible;
+            }
+
+            #menu p {
+                margin-bottom: 10px;
+                font-size: 12.5px;
+                line-height: 1.45;
+            }
+
+            .data-credit {
+                font-size: 10px;
+            }
+
+            .filter-group {
+                gap: 7px;
+                padding-top: 10px;
+            }
+
+            .filter-group+.filter-group {
+                margin-top: 10px;
+            }
+
+            .filter-title {
+                font-size: 10px;
+            }
+
+            .filter-group label {
+                min-height: 24px;
+                gap: 8px;
+                font-size: 12.5px;
+            }
+
+            #filter-count-label {
+                font-size: 12px !important;
+            }
+
+            .menu-view+.menu-view {
+                padding-left: 12px;
+            }
+
+            .maplibregl-popup-content {
+                max-width: calc(100vw - 36px);
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id="starfield-container"></div>
+    <div id="globe-glow"></div>
+    <div id="map"></div>
+    <div id="globe-overlay"></div>
+
+    <div id="menu" class="menu-collapsed">
+        <div class="menu-header">
+            <h2>An Inherited Globe</h2>
+            <button id="menu-toggle" class="menu-toggle" type="button" aria-controls="menu-body"
+                aria-expanded="false">Menu</button>
+        </div>
+        <div id="menu-body" class="menu-body">
+            <div class="menu-viewport">
+                <div class="menu-track">
+                    <div class="menu-view">
+                        <p>
+                            Mapping every
+                            <a href="https://whc.unesco.org/en/list/" target="_blank" rel="noopener noreferrer">UNESCO
+                                World Heritage</a> site.
+                            Sized by Wikipedia popularity (annual pageviews) — zoom in to reveal lesser-known sites.
+                            More details <button id="details-open" class="text-link"
+                                type="button">here</button>.<br><br>
+                            Made by <a href="https://github.com/tdemareuil/inherited-globe" target="_blank"
+                                rel="noopener noreferrer">Thomas de Mareuil</a>.
+                            Sister map to <a href="https://tdemareuil.github.io/endangered-globe" target="_blank"
+                                rel="noopener noreferrer">An Endangered Globe</a>, itself inspired by
+                            <a href="https://tjukanovt.github.io/notable-people" target="_blank"
+                                rel="noopener noreferrer">Notable People</a> by Topi Tjukanov.
+                        </p>
+                        <div class="filter-group" data-filter-group="category">
+                            <div class="filter-title">Category (by color)</div>
+                            <label><input type="checkbox" name="category-filter" value="all" checked><span
+                                    class="dot dot-all"></span> All sites</label>
+                            <label><input type="checkbox" name="category-filter" value="Cultural"><span
+                                    class="dot dot-cultural"></span> Cultural</label>
+                            <label><input type="checkbox" name="category-filter" value="Natural"><span
+                                    class="dot dot-natural"></span> Natural</label>
+                            <label><input type="checkbox" name="category-filter" value="Mixed"><span
+                                    class="dot dot-mixed"></span> Mixed</label>
+                            <label><input type="checkbox" name="category-filter" value="Danger"><span
+                                    class="dot dot-danger"></span> In danger</label>
+                        </div>
+                        <div class="filter-group" data-filter-group="region">
+                            <div class="filter-title">Region</div>
+                            <label><input type="checkbox" name="region-filter" value="all" checked><span
+                                    class="dot dot-all"></span> All regions</label>
+                            <label><input type="checkbox" name="region-filter" value="Africa"><span
+                                    class="dot dot-group"></span> Africa</label>
+                            <label><input type="checkbox" name="region-filter" value="Arab States"><span
+                                    class="dot dot-group"></span> Arab States</label>
+                            <label><input type="checkbox" name="region-filter"
+                                    value="Asia and the Pacific"><span class="dot dot-group"></span> Asia and the
+                                Pacific</label>
+                            <label><input type="checkbox" name="region-filter"
+                                    value="Europe and North America"><span class="dot dot-group"></span> Europe and
+                                North America</label>
+                            <label><input type="checkbox" name="region-filter"
+                                    value="Latin America and the Caribbean"><span class="dot dot-group"></span> Latin
+                                America and the Caribbean</label>
+                        </div>
+                        <p id="filter-count-label"
+                            style="font-size:11px;font-style:italic;color:rgba(255,255,255,0.5);margin:12px 0 0"></p>
+                        <button id="random-species-button" class="random-species-button" type="button">Zoom on a random
+                            site</button>
+                        <div class="search-species-wrap">
+                            <div id="search-species-results" class="search-species-results" role="listbox"
+                                aria-label="Search results" hidden></div>
+                            <button id="search-species-button" class="random-species-button search-species-button"
+                                type="button">Search sites</button>
+                            <div id="search-species-field" class="search-species-field" hidden>
+                                <input id="search-species-input" type="text" placeholder="Search sites"
+                                    aria-label="Search sites by name or country" autocomplete="off"
+                                    autocorrect="off" spellcheck="false">
+                                <button id="search-species-clear" class="search-species-clear" type="button"
+                                    aria-label="Clear search" hidden>&times;</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="menu-view">
+                        <div class="details-header">
+                            <button id="details-back" class="details-back" type="button"
+                                aria-label="Back to filters">&larr;</button>
+                            <div class="details-title">Method</div>
+                        </div>
+                        <div class="details-copy">
+                            <p>
+                                <span class="method-step">1. The List</span>Every property on the
+                                <a href="https://whc.unesco.org/en/list/" target="_blank"
+                                    rel="noopener noreferrer">UNESCO World Heritage List</a><sup>1</sup>, inscribed
+                                since 1978 under the 1972 World Heritage Convention. Each site is Cultural, Natural or
+                                Mixed, and carries the criteria (i)–(x) it was inscribed under. Sites the World
+                                Heritage Committee has placed on the
+                                <a href="https://whc.unesco.org/en/danger/" target="_blank"
+                                    rel="noopener noreferrer">List of World Heritage in Danger</a> are drawn in red,
+                                overriding their category color. Total sites displayed: <span
+                                    id="site-count">&mdash;</span>.
+                            </p>
+                            <p>
+                                <span class="method-step">2. Geographic data</span>Coordinates come from the official
+                                UNESCO record for each property. Serial properties &mdash; a single inscription made of
+                                several separate components, such as the 758 parts of the Frontiers of the Roman
+                                Empire &mdash; publish one point per component;
+                                <span id="centroid-sentence-primary">those sites are placed on their main
+                                    component.</span>
+                                <span id="centroid-sentence-multi">those components are clustered by distance and a
+                                    site can receive several label points, but secondary clusters are kept only when
+                                    they hold enough of its components.</span>
+                                Points are colored by category, highlighting where cultural and natural heritage
+                                concentrate.
+                            </p>
+                            <p>
+                                <span class="method-step">3. Popularity and images</span>Name size and weight come from
+                                Wikipedia pageviews (human traffic only) over the last completed year. More-viewed
+                                sites appear earlier; zooming in reveals less-viewed ones. Sites without a resolved
+                                Wikipedia article, or with 0 views in a year, get 1 view so that they still appear, at
+                                the smallest size. Photos come from the UNESCO photo gallery published with each
+                                property record, with Wikipedia and Wikidata images as a fallback.
+                            </p>
+
+                            <span class="data-credit">
+                                <sup>1</sup>Site data &copy; UNESCO World Heritage Centre, from the official
+                                <a href="https://whc.unesco.org/en/syndication" target="_blank"
+                                    rel="noopener noreferrer">World Heritage List export</a>
+                                (<span id="data-version">whc001</span>). Photos &copy; their respective authors, as
+                                credited in each popup.
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Fallback data only; the real browser dataset is loaded from sites.geojson.
+        const fallbackSites = {
+            type: 'FeatureCollection',
+            features: [
+                { type: 'Feature', geometry: { type: 'Point', coordinates: [78.0422, 27.175] }, properties: { site_id: 252, label: 'Taj Mahal', states: 'India', region: 'Asia and the Pacific', category: 'Cultural', color_key: 'Cultural', in_danger: false, date_inscribed: 1983, popularity: 4200000 } },
+                { type: 'Feature', geometry: { type: 'Point', coordinates: [147.7, -18.2] }, properties: { site_id: 154, label: 'Great Barrier Reef', states: 'Australia', region: 'Asia and the Pacific', category: 'Natural', color_key: 'Natural', in_danger: false, date_inscribed: 1981, popularity: 1900000 } },
+                { type: 'Feature', geometry: { type: 'Point', coordinates: [-72.545, -13.1631] }, properties: { site_id: 274, label: 'Historic Sanctuary of Machu Picchu', states: 'Peru', region: 'Latin America and the Caribbean', category: 'Mixed', color_key: 'Mixed', in_danger: false, date_inscribed: 1983, popularity: 3100000 } },
+                { type: 'Feature', geometry: { type: 'Point', coordinates: [12.4964, 41.9028] }, properties: { site_id: 91, label: 'Historic Centre of Rome', states: 'Italy, Holy See', region: 'Europe and North America', category: 'Cultural', color_key: 'Cultural', in_danger: false, date_inscribed: 1980, popularity: 1500000 } },
+                { type: 'Feature', geometry: { type: 'Point', coordinates: [-110.5885, 44.428] }, properties: { site_id: 28, label: 'Yellowstone National Park', states: 'United States of America', region: 'Europe and North America', category: 'Natural', color_key: 'Natural', in_danger: false, date_inscribed: 1978, popularity: 2300000 } },
+                { type: 'Feature', geometry: { type: 'Point', coordinates: [-80.9, 25.2866] }, properties: { site_id: 76, label: 'Everglades National Park', states: 'United States of America', region: 'Europe and North America', category: 'Natural', color_key: 'Danger', in_danger: true, date_inscribed: 1979, popularity: 640000 } },
+                { type: 'Feature', geometry: { type: 'Point', coordinates: [-3.0026, 16.7735] }, properties: { site_id: 119, label: 'Timbuktu', states: 'Mali', region: 'Africa', category: 'Cultural', color_key: 'Danger', in_danger: true, date_inscribed: 1988, popularity: 480000 } },
+                { type: 'Feature', geometry: { type: 'Point', coordinates: [31.1342, 29.9792] }, properties: { site_id: 86, label: 'Memphis and its Necropolis – the Pyramid Fields from Giza to Dahshur', states: 'Egypt', region: 'Arab States', category: 'Cultural', color_key: 'Cultural', in_danger: false, date_inscribed: 1979, popularity: 2800000 } },
+                { type: 'Feature', geometry: { type: 'Point', coordinates: [34.8333, -2.3333] }, properties: { site_id: 156, label: 'Serengeti National Park', states: 'United Republic of Tanzania', region: 'Africa', category: 'Natural', color_key: 'Natural', in_danger: false, date_inscribed: 1981, popularity: 720000 } },
+                { type: 'Feature', geometry: { type: 'Point', coordinates: [103.8667, 13.4125] }, properties: { site_id: 668, label: 'Angkor', states: 'Cambodia', region: 'Asia and the Pacific', category: 'Cultural', color_key: 'Cultural', in_danger: false, date_inscribed: 1992, popularity: 1100000 } },
+                { type: 'Feature', geometry: { type: 'Point', coordinates: [-90.3667, -0.6667] }, properties: { site_id: 1, label: 'Galápagos Islands', states: 'Ecuador', region: 'Latin America and the Caribbean', category: 'Natural', color_key: 'Natural', in_danger: false, date_inscribed: 1978, popularity: 950000 } },
+                { type: 'Feature', geometry: { type: 'Point', coordinates: [116.5704, 40.4319] }, properties: { site_id: 438, label: 'The Great Wall', states: 'China', region: 'Asia and the Pacific', category: 'Cultural', color_key: 'Cultural', in_danger: false, date_inscribed: 1987, popularity: 3600000 } },
+                { type: 'Feature', geometry: { type: 'Point', coordinates: [-1.5115, 48.6361] }, properties: { site_id: 80, label: 'Mont-Saint-Michel and its Bay', states: 'France', region: 'Europe and North America', category: 'Cultural', color_key: 'Cultural', in_danger: false, date_inscribed: 1979, popularity: 880000 } },
+                { type: 'Feature', geometry: { type: 'Point', coordinates: [-1.8262, 51.1789] }, properties: { site_id: 373, label: 'Stonehenge, Avebury and Associated Sites', states: 'United Kingdom of Great Britain and Northern Ireland', region: 'Europe and North America', category: 'Cultural', color_key: 'Cultural', in_danger: false, date_inscribed: 1986, popularity: 1400000 } },
+            ]
+        };
+
+        let sites = fallbackSites;
+        const menuPanel = document.getElementById('menu');
+        const menuToggle = document.getElementById('menu-toggle');
+        const detailsOpen = document.getElementById('details-open');
+        const detailsBack = document.getElementById('details-back');
+        const randomSpeciesButton = document.getElementById('random-species-button');
+        const searchSpeciesButton = document.getElementById('search-species-button');
+        const searchSpeciesField = document.getElementById('search-species-field');
+        const searchSpeciesInput = document.getElementById('search-species-input');
+        const searchSpeciesClear = document.getElementById('search-species-clear');
+        const searchSpeciesResults = document.getElementById('search-species-results');
+        const SEARCH_DEBOUNCE_MS = 500;
+        const mobileMenuQuery = window.matchMedia('(max-width: 700px)');
+
+        function updateMenuToggleLabel() {
+            if (!menuPanel || !menuToggle) return;
+            const isCollapsed = mobileMenuQuery.matches && menuPanel.classList.contains('menu-collapsed');
+            menuToggle.setAttribute('aria-expanded', String(!isCollapsed));
+            menuToggle.textContent = isCollapsed ? 'Menu' : 'Hide';
+        }
+
+        function syncMenuWithViewport() {
+            if (!menuPanel) return;
+            if (mobileMenuQuery.matches) {
+                menuPanel.classList.add('menu-collapsed');
+            } else {
+                menuPanel.classList.remove('menu-collapsed');
+            }
+            updateMenuToggleLabel();
+        }
+
+        if (menuToggle) {
+            menuToggle.addEventListener('click', () => {
+                menuPanel.classList.toggle('menu-collapsed');
+                updateMenuToggleLabel();
+            });
+        }
+        if (mobileMenuQuery.addEventListener) {
+            mobileMenuQuery.addEventListener('change', syncMenuWithViewport);
+        } else {
+            mobileMenuQuery.addListener(syncMenuWithViewport);
+        }
+        syncMenuWithViewport();
+
+        // On mobile, collapse the menu when tapping outside of it
+        document.addEventListener('click', (e) => {
+            if (!mobileMenuQuery.matches) return;
+            if (!menuPanel || menuPanel.classList.contains('menu-collapsed')) return;
+            if (menuPanel.contains(e.target)) return;
+            menuPanel.classList.add('menu-collapsed');
+            updateMenuToggleLabel();
+        });
+
+        function showMenuDetails(showDetails) {
+            if (!menuPanel) return;
+            menuPanel.classList.toggle('show-details', showDetails);
+        }
+
+        if (detailsOpen) {
+            detailsOpen.addEventListener('click', () => showMenuDetails(true));
+        }
+        if (detailsBack) {
+            detailsBack.addEventListener('click', () => showMenuDetails(false));
+        }
+        if (randomSpeciesButton) {
+            randomSpeciesButton.addEventListener('click', zoomOnRandomSite);
+        }
+
+        // The button turns into a text field in place; it turns back once left empty.
+        if (searchSpeciesButton && searchSpeciesField && searchSpeciesInput && searchSpeciesClear) {
+            let searchDebounce = null;
+
+            function commitSearch(query) {
+                const tokens = getSearchTokens(query);
+                if (tokens.length === searchTokens.length && tokens.every((t, i) => t === searchTokens[i])) return;
+                searchTokens = tokens;
+                applySiteFilter();
+            }
+
+            function syncClearButton() {
+                searchSpeciesClear.hidden = !searchSpeciesInput.value;
+            }
+
+            function openSearchField() {
+                searchSpeciesButton.hidden = true;
+                searchSpeciesField.hidden = false;
+                syncClearButton();
+                searchSpeciesInput.focus();
+            }
+
+            function closeSearchFieldIfEmpty() {
+                hideSearchResults();
+                if (searchSpeciesInput.value.trim()) return;
+                searchSpeciesField.hidden = true;
+                searchSpeciesButton.hidden = false;
+            }
+
+            searchSpeciesButton.addEventListener('click', openSearchField);
+
+            // Wrapped: the event object must not land in renderSearchResults' preserveScroll slot.
+            searchSpeciesInput.addEventListener('focus', () => renderSearchResults());
+
+            searchSpeciesInput.addEventListener('input', () => {
+                syncClearButton();
+                clearTimeout(searchDebounce);
+                searchDebounce = setTimeout(() => commitSearch(searchSpeciesInput.value), SEARCH_DEBOUNCE_MS);
+            });
+
+            searchSpeciesInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    clearTimeout(searchDebounce);
+                    commitSearch(searchSpeciesInput.value);
+                } else if (e.key === 'Escape') {
+                    searchSpeciesInput.blur();
+                }
+            });
+
+            searchSpeciesInput.addEventListener('blur', closeSearchFieldIfEmpty);
+
+            // mousedown fires before blur — without this the field and list would collapse out from under the click.
+            searchSpeciesClear.addEventListener('mousedown', (e) => e.preventDefault());
+            searchSpeciesResults.addEventListener('mousedown', (e) => e.preventDefault());
+
+            searchSpeciesClear.addEventListener('click', () => {
+                clearTimeout(searchDebounce);
+                searchSpeciesInput.value = '';
+                syncClearButton();
+                searchResultLimit = SEARCH_RESULT_LIMIT;
+                commitSearch('');
+                hideSearchResults();
+                searchSpeciesInput.focus();
+            });
+        }
+
+        async function loadSites() {
+            try {
+                const response = await fetch('sites.geojson', { cache: 'no-store' });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const data = await response.json();
+                if (!data || data.type !== 'FeatureCollection' || !Array.isArray(data.features) || !data.features.length) {
+                    throw new Error('Invalid or empty sites.geojson');
+                }
+                return data;
+            } catch (error) {
+                console.warn('Falling back to inline site sample:', error);
+                return fallbackSites;
+            }
+        }
+
+        function getPopularityQuartiles(featureCollection) {
+            const valuesBySite = new Map();
+            (featureCollection.features || []).forEach((feature, index) => {
+                const props = feature.properties || {};
+                const popularity = Number(props.popularity);
+                if (!Number.isFinite(popularity)) return;
+                const key = props.site_id ?? props.label ?? index;
+                if (!valuesBySite.has(key)) valuesBySite.set(key, popularity);
+            });
+
+            const values = Array.from(valuesBySite.values()).sort((a, b) => a - b);
+            if (!values.length) return { q1: 500000, q3: 2500000 };
+
+            const quantile = (q) => {
+                const position = (values.length - 1) * q;
+                const base = Math.floor(position);
+                const rest = position - base;
+                const next = values[base + 1];
+                return next === undefined ? values[base] : values[base] + rest * (next - values[base]);
+            };
+
+            const q1 = quantile(0.25);
+            const q3 = quantile(0.75);
+            return { q1, q3: q3 > q1 ? q3 : q1 + 1 };
+        }
+
+        const starryBg = new MapLibreStarryBackground({
+            starCount: 600,
+            glowIntensity: 0   // kills the opaque blue fill blob
+        });
+
+        function capStarSizes() {
+            if (!starryBg.stars || !starryBg.stars.length) return;
+            starryBg.stars.forEach(star => {
+                const radius = Math.min(star.size || 1, 2.0);
+                star.size = radius;
+                if (star.element) star.element.setAttribute("r", radius);
+            });
+        }
+
+        const createStarfield = starryBg.createStarfield.bind(starryBg);
+        starryBg.createStarfield = function () {
+            const svg = createStarfield();
+            capStarSizes();
+            return svg;
+        };
+
+        function normalizeLng(lng) {
+            return ((lng + 540) % 360) - 180;
+        }
+
+        function getGlobeMetrics(map) {
+            const container = map && map.getContainer ? map.getContainer() : document.body;
+            const w = container.clientWidth || window.innerWidth;
+            const h = container.clientHeight || window.innerHeight;
+            const fallback = {
+                cx: w / 2,
+                cy: h / 2,
+                r: Math.min(w, h) * 0.44
+            };
+            if (!map || !map.project || !map.getCenter) return fallback;
+
+            try {
+                const center = map.getCenter();
+                const centerPx = map.project([center.lng, center.lat]);
+                const edgePx = map.project([normalizeLng(center.lng + 90), 0]);
+                const radius = Math.hypot(edgePx.x - centerPx.x, edgePx.y - centerPx.y);
+                if (
+                    Number.isFinite(centerPx.x) &&
+                    Number.isFinite(centerPx.y) &&
+                    Number.isFinite(radius) &&
+                    radius > 80 &&
+                    radius < Math.max(w, h)
+                ) {
+                    return {
+                        cx: centerPx.x,
+                        cy: centerPx.y,
+                        r: radius
+                    };
+                }
+            } catch (e) { }
+            return fallback;
+        };
+
+        // Keep the plugin corona empty so no extra rim drifts away from the globe.
+        starryBg.calculateGlowRadius = function (map) {
+            return getGlobeMetrics(map).r;
+        };
+
+        starryBg.createEnhancedCorona = function (svg, width, height, baseRadius) {
+            if (this.elements.coronaGroup) {
+                try { svg.removeChild(this.elements.coronaGroup); } catch (e) { }
+            }
+            const ns = "http://www.w3.org/2000/svg";
+            const g = document.createElementNS(ns, "g");
+            g.setAttribute("class", "corona-group");
+            svg.appendChild(g);
+            this.elements.coronaGroup = g;
+        };
+
+        function moveStarfield(dx, dy) {
+            if (!starryBg.elements.starfieldSvg || !starryBg.stars.length) return;
+            const w = parseInt(starryBg.elements.starfieldSvg.getAttribute("width"));
+            const h = parseInt(starryBg.elements.starfieldSvg.getAttribute("height"));
+            const cx = w / 2;
+            const cy = h / 2;
+            const angle = dx * 0.00125 - dy * 0.00035;
+            const cos = Math.cos(angle);
+            const sin = Math.sin(angle);
+            const driftX = dx * 0.72;
+            const driftY = dy * 0.72;
+            starryBg.stars.forEach(star => {
+                if (!star.element) return;
+                const rx = star.pos.x - cx;
+                const ry = star.pos.y - cy;
+                let x = (cx + rx * cos - ry * sin + driftX) % w;
+                let y = (cy + rx * sin + ry * cos + driftY) % h;
+                if (x < 0) x += w;
+                if (y < 0) y += h;
+                star.pos.x = x; star.pos.y = y;
+                star.element.setAttribute("cx", x);
+                star.element.setAttribute("cy", y);
+            });
+        }
+
+        // Celestial-vault motion: one coherent sky field, gently curved around center.
+        starryBg.updateStarPositions = function (bearingDelta, pitchDelta, lngDelta) {
+            moveStarfield(
+                bearingDelta * 0.8 + lngDelta * 2.5,
+                pitchDelta * 0.4
+            );
+        };
+
+        const map = new maplibregl.Map({
+            container: 'map',
+            style: 'https://basemaps.cartocdn.com/gl/dark-matter-nolabels-gl-style/style.json',
+            zoom: 2.45,
+            minZoom: 1.6,
+            center: [115, 5],
+            pitch: 0
+        });
+
+        function clamp(value, min, max) {
+            return Math.min(max, Math.max(min, value));
+        }
+
+        // Located by IP on purpose: no permission prompt, at the cost of city-level accuracy
+        // (providers routinely disagree by a few hundred km), hence the regional landing zoom.
+        const IP_LOOKUP_ENDPOINTS = [
+            {
+                url: 'https://ipwho.is/',
+                parse: (data) => (data && data.success !== false
+                    ? { lat: Number(data.latitude), lng: Number(data.longitude) } : null)
+            },
+            {
+                url: 'https://get.geojs.io/v1/ip/geo.json',
+                parse: (data) => (data
+                    ? { lat: Number(data.latitude), lng: Number(data.longitude) } : null)
+            }
+        ];
+        const IP_LOOKUP_TIMEOUT_MS = 6000;
+        const LOCATE_ZOOM = 5;
+        // Shared by every camera move, so they all travel at the same pace.
+        const FLY_DURATION_MS = 4600;
+
+        async function lookupIpLocation() {
+            for (const endpoint of IP_LOOKUP_ENDPOINTS) {
+                try {
+                    const controller = new AbortController();
+                    const timer = setTimeout(() => controller.abort(), IP_LOOKUP_TIMEOUT_MS);
+                    const response = await fetch(endpoint.url, { signal: controller.signal });
+                    clearTimeout(timer);
+                    if (!response.ok) continue;
+                    const location = endpoint.parse(await response.json());
+                    if (location && Number.isFinite(location.lat) && Number.isFinite(location.lng)) {
+                        return location;
+                    }
+                } catch (error) {
+                    // Blocked by a privacy extension, offline, or the provider is down — try the next one.
+                    console.warn(`IP lookup failed (${endpoint.url}):`, error);
+                }
+            }
+            return null;
+        }
+
+        const LOCATE_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+            stroke-linecap="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="6.5"></circle>
+            <circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none"></circle>
+            <line x1="12" y1="1.6" x2="12" y2="4.4"></line>
+            <line x1="12" y1="19.6" x2="12" y2="22.4"></line>
+            <line x1="1.6" y1="12" x2="4.4" y2="12"></line>
+            <line x1="19.6" y1="12" x2="22.4" y2="12"></line>
+        </svg>`;
+
+        class LocateControl {
+            onAdd(mapInstance) {
+                this._map = mapInstance;
+                this._container = document.createElement('div');
+                this._container.className = 'maplibregl-ctrl maplibregl-ctrl-group locate-ctrl';
+                this._button = document.createElement('button');
+                this._button.type = 'button';
+                this._button.className = 'locate-button';
+                this._button.title = 'Zoom to my approximate location';
+                this._button.setAttribute('aria-label', 'Zoom to my approximate location');
+                this._button.innerHTML = LOCATE_ICON;
+                this._button.addEventListener('click', () => this._locate());
+                this._container.appendChild(this._button);
+                return this._container;
+            }
+
+            onRemove() {
+                if (this._container) this._container.remove();
+                this._map = undefined;
+            }
+
+            _flash(className) {
+                this._button.classList.add(className);
+                setTimeout(() => this._button.classList.remove(className), 1800);
+            }
+
+            async _locate() {
+                if (this._busy) return;
+                this._busy = true;
+                this._button.classList.add('is-busy');
+                try {
+                    // Cached: the IP won't move mid-session, so repeat clicks re-fly for free.
+                    if (!this._location) this._location = await lookupIpLocation();
+                    if (!this._location) {
+                        this._flash('is-error');
+                        return;
+                    }
+                    this._map.flyTo({
+                        center: [this._location.lng, this._location.lat],
+                        zoom: Math.max(this._map.getZoom(), LOCATE_ZOOM),
+                        duration: FLY_DURATION_MS,
+                        essential: true
+                    });
+                } finally {
+                    this._busy = false;
+                    this._button.classList.remove('is-busy');
+                }
+            }
+        }
+
+        map.addControl(new LocateControl(), 'bottom-right');
+
+        const siteLayerIds = ['sites-dots', 'sites-labels'];
+        const selectedCategories = new Set();
+        const selectedRegions = new Set();
+
+        function getChoiceFilter(propertyName, selectedValues) {
+            return selectedValues.size
+                ? ['match', ['get', propertyName], Array.from(selectedValues), true, false]
+                : null;
+        }
+
+        const SHOW_MAIN_POINT_ONLY = true; // set to false to show secondary centroids
+        document.getElementById('centroid-sentence-primary').style.display = SHOW_MAIN_POINT_ONLY ? '' : 'none';
+        document.getElementById('centroid-sentence-multi').style.display = SHOW_MAIN_POINT_ONLY ? 'none' : '';
+
+        // Lowercase and strip accents, so "perez" matches "Pérez".
+        // Letters that are their own codepoint don't decompose, so map the ones present in the data by hand:
+        // \u00f8 Schi\u00f8tz → schiotz, \u00df H\u00e4\u00dfleins → hassleins,
+        // \u0131 I\u015f\u0131kl\u0131 → isikli, \u00e6 Dv\u00e6rgmakropode → dvaerg..., \u00fe \u00deingvallavatn → thingvallavatn.
+        function foldForSearch(value) {
+            return String(value || '')
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .toLowerCase()
+                .replace(/\u00f8/g, 'o')
+                .replace(/\u00df/g, 'ss')
+                .replace(/\u0131/g, 'i')
+                .replace(/\u00e6/g, 'ae')
+                .replace(/\u00fe/g, 'th');
+        }
+
+        // Common name lives in `label`; `states` is only set when it isn't already part of the label.
+        // Filter expressions can't fold accents, so the folded name is precomputed onto each feature at load.
+        function addSearchNames(featureCollection) {
+            (featureCollection.features || []).forEach(feature => {
+                const props = feature.properties || (feature.properties = {});
+                props.search_name = foldForSearch(`${props.label || ''} ${props.states || ''}`);
+            });
+            return featureCollection;
+        }
+
+        let searchTokens = [];
+
+        function getSearchTokens(query) {
+            return foldForSearch(query).split(/\s+/).filter(Boolean);
+        }
+
+        function getSearchFilter() {
+            if (!searchTokens.length) return null;
+            return ['all', ...searchTokens.map(token =>
+                ['>=', ['index-of', token, ['coalesce', ['get', 'search_name'], '']], 0])];
+        }
+
+        const SEARCH_RESULT_LIMIT = 30;
+        const CATEGORY_DOT_CLASSES = { Cultural: 'dot-cultural', Natural: 'dot-natural', Mixed: 'dot-mixed', Danger: 'dot-danger' };
+
+        // Grows by SEARCH_RESULT_LIMIT each time the footer is clicked; only the X (or a reload) resets it.
+        let searchResultLimit = SEARCH_RESULT_LIMIT;
+
+        // One entry per site, most popular first — same ordering the globe uses to reveal labels.
+        function getSearchResults(limit) {
+            const bySite = new Map();
+            (sites.features || []).forEach((feature, index) => {
+                const coords = feature.geometry && feature.geometry.coordinates;
+                if (!Array.isArray(coords) || coords.length < 2) return;
+                if (!Number.isFinite(Number(coords[0])) || !Number.isFinite(Number(coords[1]))) return;
+                if (!featureMatchesCurrentFilters(feature)) return;
+                const props = feature.properties || {};
+                const key = String(props.site_id || props.label || index);
+                if (!bySite.has(key)) bySite.set(key, feature);
+            });
+            const matches = Array.from(bySite.values()).sort((a, b) =>
+                (Number(b.properties.popularity) || 0) - (Number(a.properties.popularity) || 0));
+            return { total: matches.length, shown: matches.slice(0, limit) };
+        }
+
+        function buildSearchResultRow(feature) {
+            const props = feature.properties || {};
+            const row = document.createElement('button');
+            row.type = 'button';
+            row.className = 'search-result';
+            row.setAttribute('role', 'option');
+
+            const dot = document.createElement('span');
+            dot.className = `dot ${CATEGORY_DOT_CLASSES[props.color_key] || 'dot-group'}`;
+            row.appendChild(dot);
+
+            const name = document.createElement('span');
+            name.className = 'search-result-name';
+            name.textContent = props.short_label || props.label || 'Unnamed site';
+            if (props.states) {
+                const where = document.createElement('span');
+                where.className = 'search-result-sci';
+                where.textContent = ` ${props.states}`;
+                name.appendChild(where);
+            }
+            row.appendChild(name);
+
+            row.addEventListener('click', () => {
+                hideSearchResults();
+                flyToSite(feature);
+            });
+            return row;
+        }
+
+        function hideSearchResults() {
+            if (searchSpeciesResults) searchSpeciesResults.hidden = true;
+        }
+
+        function renderSearchResults(preserveScroll) {
+            if (!searchSpeciesResults) return;
+            const previousScroll = searchSpeciesResults.scrollTop;
+            searchSpeciesResults.textContent = '';
+            if (!searchTokens.length || searchSpeciesField.hidden) {
+                hideSearchResults();
+                return;
+            }
+            const { total, shown } = getSearchResults(searchResultLimit);
+            if (!shown.length) {
+                hideSearchResults();
+                return;
+            }
+            shown.forEach(feature => searchSpeciesResults.appendChild(buildSearchResultRow(feature)));
+            const remaining = total - shown.length;
+            if (remaining > 0) {
+                const more = document.createElement('button');
+                more.type = 'button';
+                more.className = 'search-results-more';
+                const nextChunk = remaining > SEARCH_RESULT_LIMIT
+                    ? `or click to see ${SEARCH_RESULT_LIMIT} more`
+                    : 'or click to see more';
+                const noun = remaining === 1 ? 'match' : 'matches';
+                more.textContent =
+                    `${remaining.toLocaleString()} more ${noun} — keep typing to narrow down, ${nextChunk}`;
+                more.addEventListener('click', () => {
+                    searchResultLimit += SEARCH_RESULT_LIMIT;
+                    renderSearchResults(true);
+                });
+                searchSpeciesResults.appendChild(more);
+            }
+            // Unhide first: scrollTop is a no-op while the element is display:none.
+            searchSpeciesResults.hidden = false;
+            searchSpeciesResults.scrollTop = preserveScroll ? previousScroll : 0;
+        }
+
+        function featureMatchesSearch(feature) {
+            if (!searchTokens.length) return true;
+            const props = feature.properties || {};
+            const haystack = props.search_name
+                || foldForSearch(`${props.label || ''} ${props.states || ''}`);
+            return searchTokens.every(token => haystack.includes(token));
+        }
+
+        function getSiteFilter() {
+            const filters = [
+                getChoiceFilter('color_key', selectedCategories),
+                getChoiceFilter('region', selectedRegions),
+                getSearchFilter()
+            ].filter(Boolean);
+            return filters.length ? ['all', ...filters] : null;
+        }
+
+        function applySiteFilter() {
+            if (!siteLayerIds.every(layerId => map.getLayer(layerId))) return;
+            const filter = getSiteFilter();
+            siteLayerIds.forEach(layerId => map.setFilter(layerId, filter));
+            const count = sites.features.filter(f => featureMatchesCurrentFilters(f)).length;
+            const el = document.getElementById('filter-count-label');
+            if (el) {
+                el.textContent = searchTokens.length && !count
+                    ? 'No site matches this search'
+                    : `Current filters: ${count.toLocaleString()} sites`;
+                el.classList.toggle('search-no-match', Boolean(searchTokens.length) && !count);
+            }
+            renderSearchResults();
+        }
+
+        function featureMatchesCurrentFilters(feature) {
+            const props = feature.properties || {};
+            if (SHOW_MAIN_POINT_ONLY && (props.label_rank ?? 1) !== 1) return false;
+            if (selectedCategories.size && !selectedCategories.has(props.color_key)) return false;
+            if (selectedRegions.size && !selectedRegions.has(props.region)) return false;
+            if (!featureMatchesSearch(feature)) return false;
+            return true;
+        }
+
+        function getRandomSiteFeature() {
+            const bySiteId = new Map();
+            (sites.features || []).forEach((feature, index) => {
+                const coords = feature.geometry && feature.geometry.coordinates;
+                if (!Array.isArray(coords) || coords.length < 2) return;
+                if (!Number.isFinite(Number(coords[0])) || !Number.isFinite(Number(coords[1]))) return;
+                if (!featureMatchesCurrentFilters(feature)) return;
+                const props = feature.properties || {};
+                if (!safeExternalUrl(props.image_url)) return;
+                const key = String(props.site_id || props.label || index);
+                if (!bySiteId.has(key)) bySiteId.set(key, []);
+                bySiteId.get(key).push(feature);
+            });
+            const groups = Array.from(bySiteId.values());
+            if (!groups.length) return null;
+            const group = groups[Math.floor(Math.random() * groups.length)];
+            return group[Math.floor(Math.random() * group.length)];
+        }
+
+        function zoomOnRandomSite() {
+            flyToSite(getRandomSiteFeature());
+        }
+
+        function flyToSite(feature) {
+            if (!feature) return;
+            const [lng, lat] = feature.geometry.coordinates.map(Number);
+            const duration = FLY_DURATION_MS;
+            let opened = false;
+            const openPopup = () => {
+                if (opened) return;
+                opened = true;
+                showSitePopup(feature);
+            };
+            map.once('moveend', openPopup);
+            setTimeout(openPopup, duration * 0.42);
+            map.flyTo({
+                center: [lng, lat],
+                zoom: Math.max(map.getZoom(), 4.6),
+                duration,
+                essential: true
+            });
+        }
+
+        function setupMultiSelectFilter(inputName, selectedSet, onUpdate) {
+            const inputs = Array.from(document.querySelectorAll(`input[name="${inputName}"]`));
+            const allInput = inputs.find(input => input.value === 'all');
+            const optionInputs = inputs.filter(input => input.value !== 'all');
+
+            function syncAllState() {
+                if (!allInput) return;
+                allInput.checked = selectedSet.size === 0;
+            }
+
+            inputs.forEach(input => {
+                input.addEventListener('change', () => {
+                    if (input.value === 'all') {
+                        selectedSet.clear();
+                        optionInputs.forEach(option => { option.checked = false; });
+                    } else if (input.checked) {
+                        selectedSet.add(input.value);
+                    } else {
+                        selectedSet.delete(input.value);
+                    }
+                    syncAllState();
+                    onUpdate();
+                });
+            });
+        }
+
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>"']/g, char => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            }[char]));
+        }
+
+        function hasDisplayValue(value) {
+            if (value === null || value === undefined) return false;
+            const text = String(value).trim();
+            const normalized = text.toLowerCase();
+            return text !== '' && !['none', 'nan', 'unknown'].includes(normalized);
+        }
+
+        function formatDataValue(value) {
+            if (!hasDisplayValue(value)) return '';
+            const text = String(value).trim();
+            const number = Number(text.replace(/,/g, ''));
+            if (Number.isFinite(number) && /^-?\d+(\.\d+)?$/.test(text.replace(/,/g, ''))) {
+                return number.toLocaleString(undefined, { maximumFractionDigits: 1 });
+            }
+            return text;
+        }
+
+        function safeExternalUrl(value) {
+            const url = String(value || '').trim();
+            if (!/^https?:\/\//i.test(url)) return '';
+            return url.replace(/^http:/i, 'https:');
+        }
+
+        function unescoUrlFromSiteId(siteId) {
+            const id = String(siteId ?? '').trim();
+            if (!/^\d+$/.test(id)) return '';
+            return `https://whc.unesco.org/en/list/${id}`;
+        }
+
+        // The UNESCO export ships the extra gallery photos as one comma-separated string.
+        function parseUrlList(value) {
+            if (Array.isArray(value)) return value.map(v => String(v).trim()).filter(Boolean);
+            return String(value || '').split(',').map(v => v.trim()).filter(Boolean);
+        }
+
+        // Short descriptions carry occasional inline HTML (<em>, <p>) from the UNESCO CMS.
+        function stripTags(value) {
+            return String(value || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+        }
+
+        function truncateText(value, maxLength) {
+            const text = String(value || '').trim();
+            if (text.length <= maxLength) return text;
+            const cut = text.slice(0, maxLength);
+            const lastSpace = cut.lastIndexOf(' ');
+            return `${(lastSpace > maxLength * 0.6 ? cut.slice(0, lastSpace) : cut).replace(/[\s,;:.]+$/, '')}…`;
+        }
+
+        function wikipediaUrlFromProject(project, title) {
+            const wikiProject = String(project || 'en.wikipedia.org').trim();
+            const pageTitle = String(title || '').trim().replace(/\s+/g, '_');
+            if (!/^[a-z0-9.-]+\.wikipedia\.org$/i.test(wikiProject) || !pageTitle) return '';
+            return `https://${wikiProject}/wiki/${encodeURIComponent(pageTitle)}`;
+        }
+
+        function paintGlobeStyleLayers() {
+            const ocean = '#4D106F';
+            const land = '#A538F0';
+            const boundary = '#DC83EF';
+
+            if (!map.getSource('globe-land')) {
+                map.addSource('globe-land', {
+                    type: 'geojson',
+                    data: {
+                        type: 'Feature',
+                        geometry: {
+                            type: 'Polygon',
+                            coordinates: [[
+                                [-180, -90],
+                                [-180, 90],
+                                [180, 90],
+                                [180, -90],
+                                [-180, -90]
+                            ]]
+                        },
+                        properties: {}
+                    }
+                });
+            }
+
+            if (!map.getLayer('globe-land-fill')) {
+                map.addLayer({
+                    id: 'globe-land-fill',
+                    type: 'fill',
+                    source: 'globe-land',
+                    paint: {
+                        'fill-color': land,
+                        'fill-opacity': 1
+                    }
+                }, 'landcover');
+            }
+
+            map.getStyle().layers.forEach(layer => {
+                const layerKey = `${layer.id} ${layer['source-layer'] || ''}`.toLowerCase();
+                if (layer.type === 'background') {
+                    try { map.setPaintProperty(layer.id, 'background-opacity', 0); } catch (e) { }
+                    try { map.setPaintProperty(layer.id, 'background-color', 'rgba(0,0,0,0)'); } catch (e) { }
+                } else if (layer.type === 'fill') {
+                    const isWater = /water|ocean|marine|lake|river/.test(layerKey);
+                    const isShadow = /shadow/.test(layerKey);
+                    try { map.setPaintProperty(layer.id, 'fill-opacity', 1); } catch (e) { }
+                    if (isShadow) {
+                        try { map.setPaintProperty(layer.id, 'fill-opacity', 0); } catch (e) { }
+                    } else {
+                        try { map.setPaintProperty(layer.id, 'fill-color', isWater ? ocean : land); } catch (e) { }
+                    }
+                } else if (layer.type === 'line') {
+                    const isBoundary = /boundary|admin|country|border/.test(layerKey);
+                    try { map.setPaintProperty(layer.id, 'line-opacity', isBoundary ? 0.42 : 0.16); } catch (e) { }
+                    try { map.setPaintProperty(layer.id, 'line-color', isBoundary ? boundary : '#9F51C8'); } catch (e) { }
+                } else if (layer.type === 'symbol') {
+                    try { map.setLayoutProperty(layer.id, 'visibility', 'none'); } catch (e) { }
+                }
+            });
+        }
+
+        // Keep this layer empty unless a globe effect can track MapLibre's globe exactly.
+        function updateGlobeEffects(map) {
+            const overlay = document.getElementById('globe-overlay');
+            if (!overlay) return;
+            overlay.innerHTML = '';
+        }
+
+        let globeEffectsFrame = null;
+        function scheduleGlobeEffectsUpdate() {
+            if (globeEffectsFrame !== null) return;
+            globeEffectsFrame = requestAnimationFrame(() => {
+                globeEffectsFrame = null;
+                updateGlobeEffects(map);
+            });
+        }
+
+        map.on('style.load', () => {
+            map.setProjection({ type: 'globe' });
+
+            paintGlobeStyleLayers();
+
+            starryBg.attachToMap(map, 'starfield-container', 'globe-glow');
+            setTimeout(scheduleGlobeEffectsUpdate, 250);
+        });
+
+        map.on('zoom', scheduleGlobeEffectsUpdate);
+        map.on('move', scheduleGlobeEffectsUpdate);
+        window.addEventListener('resize', scheduleGlobeEffectsUpdate);
+
+        let wheelOrbitFrame = null;
+        let wheelOrbit = null;
+        map.getCanvasContainer().addEventListener('wheel', event => {
+            const rect = map.getCanvasContainer().getBoundingClientRect();
+            const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? rect.height : 1);
+            wheelOrbit = {
+                x: event.clientX - rect.left,
+                y: event.clientY - rect.top,
+                width: rect.width,
+                height: rect.height,
+                delta
+            };
+
+            if (wheelOrbitFrame !== null) return;
+            wheelOrbitFrame = requestAnimationFrame(() => {
+                wheelOrbitFrame = null;
+                if (!wheelOrbit) return;
+
+                const { x, y, width, height, delta } = wheelOrbit;
+                const offX = (x - width / 2) / (width / 2);
+                const offY = (y - height / 2) / (height / 2);
+                const offCenter = Math.min(1.15, Math.hypot(offX, offY));
+                if (offCenter < 0.12 || !delta) return;
+
+                const center = map.getCenter();
+                const cursorLngLat = map.unproject([x, y]);
+                const lngDelta = normalizeLng(cursorLngLat.lng - center.lng);
+                const latDelta = cursorLngLat.lat - center.lat;
+                const zoomDirection = delta < 0 ? 1 : -1;
+                const wheelStrength = Math.min(1, Math.abs(delta) / 120);
+                const orbitAmount = 0.018 * offCenter * wheelStrength * zoomDirection;
+
+                map.jumpTo({
+                    center: [
+                        normalizeLng(center.lng + lngDelta * orbitAmount),
+                        clamp(center.lat + latDelta * orbitAmount, -82, 82)
+                    ]
+                });
+            });
+        }, { passive: true });
+
+        map.on('load', async () => {
+            sites = await loadSites();
+            if (SHOW_MAIN_POINT_ONLY) {
+                sites = { ...sites, features: sites.features.filter(f => (f.properties.label_rank ?? 1) === 1) };
+            }
+            addSearchNames(sites);
+            const siteCount = new Set(sites.features.map(f => f.properties.site_id)).size;
+            const siteCountEl = document.getElementById('site-count');
+            if (siteCountEl) siteCountEl.textContent = siteCount.toLocaleString();
+            const popularityQuartiles = getPopularityQuartiles(sites);
+            map.addSource('sites', { type: 'geojson', data: sites });
+
+            map.addLayer({
+                id: 'sites-dots',
+                type: 'circle',
+                source: 'sites',
+                paint: {
+                    'circle-radius': ['interpolate', ['linear'], ['zoom'], 0, 1.1, 5, 2.2, 10, 6.0, 15, 12.0, 20, 20.0],
+                    'circle-color': ['match', ['get', 'color_key'],
+                        'Cultural', '#FFC24D',
+                        'Natural', '#5CE68A',
+                        'Mixed', '#4DD9FF',
+                        'Danger', '#FF4D5E',
+                        '#ffffff'],
+                    'circle-blur': 0.4,
+                    'circle-opacity': 0.85
+                }
+            });
+
+            map.addLayer({
+                id: 'sites-labels',
+                type: 'symbol',
+                source: 'sites',
+                layout: {
+                    'symbol-sort-key': ['*', -1, ['to-number', ['get', 'popularity'], 0]],
+                    'text-field': ['coalesce', ['get', 'short_label'], ['get', 'label']],
+                    'text-max-width': 8,
+                    'text-font': [
+                        'step', ['to-number', ['get', 'popularity'], 0],
+                        ['literal', ['Open Sans Regular', 'Arial Unicode MS Regular']],
+                        popularityQuartiles.q1, ['literal', ['Open Sans Semibold', 'Arial Unicode MS Regular']],
+                        popularityQuartiles.q3, ['literal', ['Open Sans Bold', 'Arial Unicode MS Regular']]
+                    ],
+                    'text-allow-overlap': false,
+                    'text-ignore-placement': false,
+                    'text-padding': 6,
+                    'text-size': [
+                        'interpolate', ['linear'], ['zoom'],
+                        2, ['interpolate', ['linear'], ['ln', ['max', ['to-number', ['get', 'popularity'], 1], 1]], 4.5, 3.5, 14.0, 11],
+                        8, ['interpolate', ['linear'], ['ln', ['max', ['to-number', ['get', 'popularity'], 1], 1]], 4.5, 7, 14.0, 17],
+                        14, ['interpolate', ['linear'], ['ln', ['max', ['to-number', ['get', 'popularity'], 1], 1]], 4.5, 8, 14.0, 22]
+                    ],
+                    'text-offset': ['interpolate', ['linear'], ['zoom'], 2, ['literal', [0, 0.6]], 10, ['literal', [0, 1.6]]]
+                },
+                paint: {
+                    'text-color': '#ffffff',
+                    'text-halo-color': 'rgba(16, 2, 24, 0.74)',
+                    'text-halo-width': 0.55,
+                    'text-halo-blur': 0.1
+                }
+            });
+
+            applySiteFilter();
+        });
+
+        // N/S celestial-vault motion: latitude delta shifts the whole starfield.
+        let lastLat = map.getCenter().lat;
+        map.on('move', () => {
+            const lat = map.getCenter().lat;
+            const dLat = lat - lastLat;
+            lastLat = lat;
+            if (!dLat) return;
+            moveStarfield(0, -dLat * 2.5);
+        });
+
+        setupMultiSelectFilter('category-filter', selectedCategories, applySiteFilter);
+        setupMultiSelectFilter('region-filter', selectedRegions, applySiteFilter);
+
+        const popup = new maplibregl.Popup({ closeButton: true, maxWidth: '300px' });
+        const neonColor = { Cultural: '#FFC24D', Natural: '#5CE68A', Mixed: '#4DD9FF', Danger: '#FF4D5E' };
+        const categoryLabel = { Cultural: 'Cultural', Natural: 'Natural', Mixed: 'Mixed (cultural & natural)', Danger: 'In danger' };
+
+        function showSitePopup(feature) {
+            if (!feature) return;
+            const {
+                site_id, label, category, color_key, in_danger, region, states, iso_codes,
+                date_inscribed, criteria, area_hectares, short_description, component_count,
+                unesco_url, image_url, extra_image_urls, image_credit, image_source,
+                wiki_title, wiki_project, wiki_url, wikidata_url,
+                wikidata_image_url, wikipedia_thumbnail_url, popularity
+            } = feature.properties || {};
+            const coords = feature.geometry && feature.geometry.coordinates;
+            if (!Array.isArray(coords) || coords.length < 2) return;
+            const color = neonColor[color_key] || '#fff';
+            const siteName = String(label || 'Unnamed site');
+            const unescoHref = safeExternalUrl(unesco_url) || unescoUrlFromSiteId(site_id);
+            const wikiHref = safeExternalUrl(wiki_url) || wikipediaUrlFromProject(wiki_project, wiki_title);
+            const wikidataHref = safeExternalUrl(wikidata_url);
+            const popularityNumber = Number(popularity);
+            const formattedPopularity = Number.isFinite(popularityNumber) ? popularityNumber.toLocaleString() : 'n/a';
+
+            // UNESCO gallery photos first (that's the property's own record), then Wikipedia/Wikidata.
+            const slides = [];
+            const seen = new Set();
+            const pushSlide = (url, creditUrl, slideLabel, credit) => {
+                const safe = safeExternalUrl(url);
+                if (!safe || seen.has(safe)) return;
+                seen.add(safe);
+                slides.push({ url: safe, creditUrl: safeExternalUrl(creditUrl) || safe, label: slideLabel, credit: credit || null });
+            };
+            pushSlide(image_url, unescoHref, image_source === 'UNESCO' ? 'UNESCO ©' : 'Image', image_credit);
+            parseUrlList(extra_image_urls).forEach(url => pushSlide(url, unescoHref, 'UNESCO ©', image_credit));
+            pushSlide(wikipedia_thumbnail_url, wikiHref, 'Wikipedia', null);
+            pushSlide(wikidata_image_url, wikidata_image_url, 'Wikidata', null);
+
+            const hasSlides = slides.length > 0;
+            const imageHtml = hasSlides ? `
+                <div class="popup-image-wrap">
+                    <img class="popup-species-image" id="popup-slide-img" src="${escapeHtml(slides[0].url)}" alt="${escapeHtml(siteName)}" referrerpolicy="no-referrer" loading="lazy" onload="const _r=this.naturalWidth/this.naturalHeight;if(_r>2.2){this.classList.add('is-ultrawide')}else if(_r<0.4){this.classList.add('is-ultranarrow')}else if(_r<1){this.classList.add('is-portrait')}else{this.style.height=Math.min(220,Math.round(this.clientWidth*this.naturalHeight/this.naturalWidth))+'px'}" onerror="this.style.display='none'">
+                    ${slides.length > 1 ? `
+                        <button class="popup-slide-btn popup-slide-prev">&#8249;</button>
+                        <button class="popup-slide-btn popup-slide-next">&#8250;</button>
+                    ` : ''}
+                </div>
+                ${slides.length > 1 ? `<div class="popup-slide-dots" id="popup-slide-dots">${slides.map((_, i) => i === 0 ? '●' : '○').join(' ')}</div>` : ''}
+            ` : '';
+
+            const statesHtml = hasDisplayValue(states)
+                ? `<span style="color:rgba(255,255,255,0.78)">${escapeHtml(String(states))}</span><br>`
+                : '';
+            const regionHtml = hasDisplayValue(region)
+                ? `<span style="color:rgba(255,255,255,0.7)">${escapeHtml(String(region))}</span><br>`
+                : '';
+            const criteriaHtml = hasDisplayValue(criteria)
+                ? `<span style="color:rgba(255,255,255,0.7)">Criteria: ${escapeHtml(String(criteria))}</span><br>`
+                : '';
+            const areaNumber = Number(area_hectares);
+            const areaHtml = Number.isFinite(areaNumber) && areaNumber > 0
+                ? `<span style="color:rgba(255,255,255,0.7)">Area: ${Math.round(areaNumber).toLocaleString()} ha</span><br>`
+                : '';
+            const componentsNumber = Number(component_count);
+            const componentsHtml = Number.isFinite(componentsNumber) && componentsNumber > 1
+                ? `<span style="color:rgba(255,255,255,0.7)">Serial property: ${componentsNumber.toLocaleString()} components</span><br>`
+                : '';
+            const descriptionHtml = hasDisplayValue(short_description)
+                ? `<span class="popup-description">${escapeHtml(truncateText(stripTags(short_description), 260))}</span>`
+                : '';
+
+            const sourceLinks = [
+                unescoHref ? `<a href="${escapeHtml(unescoHref)}" target="_blank" rel="noopener noreferrer">UNESCO</a>` : '',
+                wikiHref ? `<a href="${escapeHtml(wikiHref)}" target="_blank" rel="noopener noreferrer">Wikipedia</a>` : '',
+                wikidataHref ? `<a href="${escapeHtml(wikidataHref)}" target="_blank" rel="noopener noreferrer">Wikidata</a>` : '',
+                slides[0] ? `<a id="popup-img-credit" href="${escapeHtml(slides[0].creditUrl)}" target="_blank" rel="noopener noreferrer">${slides[0].label}</a>` : '',
+            ].filter(Boolean).join(' <span aria-hidden="true">|</span> ');
+            const creditLine = slides[0] && slides[0].credit
+                ? `<span class="popup-image-source" style="display:block;margin-top:3px" id="popup-img-attr">${escapeHtml(slides[0].credit)}</span>`
+                : '<span id="popup-img-attr"></span>';
+            const imageSourceHtml = sourceLinks
+                ? `<span class="popup-image-source">${sourceLinks}</span>${creditLine}`
+                : '';
+
+            const titleHref = unescoHref || wikiHref;
+            popup.setLngLat(coords).setHTML(`
+                ${imageHtml}
+                <b style="font-size:14px">
+                    ${titleHref
+                    ? `<a href="${escapeHtml(titleHref)}" target="_blank" rel="noopener noreferrer" style="color:${color}; text-decoration:underline">${escapeHtml(siteName)}</a>`
+                    : `<span style="color:${color}">${escapeHtml(siteName)}</span>`}
+                </b><br>
+                <span style="color:${color}; font-weight:bold">&#9679; ${escapeHtml(categoryLabel[color_key] || category || 'Unknown category')}</span>${date_inscribed ? ` <span style="color:rgba(255,255,255,0.5)">(inscribed ${escapeHtml(String(date_inscribed))})</span>` : ''}<br>
+                ${in_danger && color_key === 'Danger' && category ? `<span style="color:rgba(255,255,255,0.78)">${escapeHtml(String(category))} property</span><br>` : ''}
+                ${statesHtml}
+                ${regionHtml}
+                ${criteriaHtml}
+                ${areaHtml}
+                ${componentsHtml}
+                ${descriptionHtml}
+                <span style="color:rgba(255,255,255,0.6); font-size:11px">Wikipedia views/yr: ${formattedPopularity}</span>
+                ${imageSourceHtml}
+            `).addTo(map);
+
+            // Wire up slideshow navigation
+            if (slides.length > 1) {
+                let idx = 0;
+                const el = popup.getElement();
+                const img = el.querySelector('#popup-slide-img');
+                const creditLink = el.querySelector('#popup-img-credit');
+                const attrSpan = el.querySelector('#popup-img-attr');
+                const dots = el.querySelector('#popup-slide-dots');
+
+                // Preload all non-primary slide images in the background
+                slides.slice(1).forEach(slide => { if (slide.url) { const _p = new Image(); _p.src = slide.url; } });
+
+                const goTo = (newIdx) => {
+                    idx = (newIdx + slides.length) % slides.length;
+                    const slide = slides[idx];
+                    img.classList.remove('is-portrait', 'is-ultrawide', 'is-ultranarrow');
+                    img.style.display = '';
+                    img.style.height = '';
+                    img.onload = () => {
+                        const _r = img.naturalWidth / img.naturalHeight;
+                        if (_r > 2.2) img.classList.add('is-ultrawide');
+                        else if (_r < 0.4) img.classList.add('is-ultranarrow');
+                        else if (_r < 1) img.classList.add('is-portrait');
+                        else img.style.height = Math.min(220, Math.round(img.clientWidth * img.naturalHeight / img.naturalWidth)) + 'px';
+                    };
+                    img.onerror = () => { img.style.display = 'none'; };
+                    img.src = slide.url;
+                    if (creditLink) { creditLink.href = slide.creditUrl; creditLink.textContent = slide.label; }
+                    if (attrSpan) attrSpan.textContent = slide.credit || '';
+                    if (dots) dots.innerHTML = slides.map((_, i) => i === idx ? '●' : '○').join(' ');
+                };
+
+                el.querySelector('.popup-slide-prev').addEventListener('click', (e) => { e.stopPropagation(); goTo(idx - 1); });
+                el.querySelector('.popup-slide-next').addEventListener('click', (e) => { e.stopPropagation(); goTo(idx + 1); });
+            }
+        }
+
+        map.on('click', 'sites-labels', (e) => {
+            showSitePopup(e.features && e.features[0]);
+        });
+
+        map.on('mouseenter', 'sites-labels', () => { map.getCanvas().style.cursor = 'pointer'; });
+        map.on('mouseleave', 'sites-labels', () => { map.getCanvas().style.cursor = ''; });
+    </script>
+
+</body>
+
+</html>
