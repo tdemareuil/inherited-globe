@@ -772,10 +772,15 @@
             bottom: 0;
             max-height: 100%;
             overflow: hidden;
-            padding: 14px 9px 7px;
+            padding: 28px 9px 8px;
             box-sizing: border-box;
             border-radius: 0 0 7px 7px;
-            background: linear-gradient(to top, rgba(4, 2, 20, 0.94) 35%, rgba(4, 2, 20, 0));
+            /* Opaque behind the text, fading out across the top padding only. Tied to the
+               padding in pixels rather than a percentage, so the scrim clears the text by
+               the same margin whether the caption runs to one line or six. */
+            background: linear-gradient(to top,
+                    rgba(4, 2, 20, 0.95) calc(100% - 28px),
+                    rgba(4, 2, 20, 0) 100%);
             color: rgba(255, 255, 255, 0.92);
             font-size: 10px;
             line-height: 1.45;
