@@ -727,6 +727,13 @@
             white-space: nowrap;
         }
 
+        /* The Wikipedia slot is kept in the row even before the pipeline resolves the
+           article, so the source line does not reflow once popularity data lands. */
+        .popup-source-pending {
+            color: rgba(255, 255, 255, 0.3);
+            cursor: default;
+        }
+
         .popup-description {
             display: block;
             overflow-y: auto;
@@ -2178,8 +2185,6 @@
                 seen.add(safe);
                 slides.push({
                     url: safe,
-                    creditUrl: unescoHref || safe,
-                    label: 'UNESCO ©',
                     credit: isPrimary ? photoCredit : null,
                     caption: isPrimary && hasDisplayValue(image_caption) ? String(image_caption).trim() : ''
                 });
@@ -2215,9 +2220,10 @@
 
             const sourceLinks = [
                 unescoHref ? `<a href="${escapeHtml(unescoHref)}" target="_blank" rel="noopener noreferrer">UNESCO</a>` : '',
-                wikiHref ? `<a href="${escapeHtml(wikiHref)}" target="_blank" rel="noopener noreferrer">Wikipedia</a>` : '',
+                wikiHref
+                    ? `<a href="${escapeHtml(wikiHref)}" target="_blank" rel="noopener noreferrer">Wikipedia</a>`
+                    : '<span class="popup-source-pending" title="No Wikipedia article resolved for this site yet">Wikipedia</span>',
                 wikidataHref ? `<a href="${escapeHtml(wikidataHref)}" target="_blank" rel="noopener noreferrer">Wikidata</a>` : '',
-                slides[0] ? `<a id="popup-img-credit" href="${escapeHtml(slides[0].creditUrl)}" target="_blank" rel="noopener noreferrer">${slides[0].label}</a>` : '',
             ].filter(Boolean).join(' <span aria-hidden="true">|</span> ');
             const creditLine = slides[0] && slides[0].credit
                 ? `<span class="popup-image-source" style="display:block;margin-top:3px" id="popup-img-attr">Photo: ${escapeHtml(slides[0].credit)}</span>`
@@ -2334,7 +2340,6 @@
                 let idx = 0;
                 const el = popup.getElement();
                 const img = el.querySelector('#popup-slide-img');
-                const creditLink = el.querySelector('#popup-img-credit');
                 const attrSpan = el.querySelector('#popup-img-attr');
                 const dots = el.querySelector('#popup-slide-dots');
                 const caption = el.querySelector('#popup-slide-caption');
@@ -2356,7 +2361,6 @@
                         caption.textContent = slide.caption || '';
                         caption.hidden = !slide.caption;
                     }
-                    if (creditLink) { creditLink.href = slide.creditUrl; creditLink.textContent = slide.label; }
                     if (attrSpan) attrSpan.textContent = slide.credit ? `Photo: ${slide.credit}` : '';
                     if (dots) dots.textContent = slideIndicator(idx, slides.length);
                     preload(idx + 1);
