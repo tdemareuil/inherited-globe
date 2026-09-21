@@ -1167,6 +1167,58 @@ def _title_key(title):
     return clean_str(title).replace("_", " ").strip().casefold()
 
 
+def wikidata_sitelinks(qids, batch_size=50):
+    """qid -> {language: article title}, for the Wikipedia sitelinks of each item."""
+    out = {}
+    qids = [q for q in dict.fromkeys(qids) if q]
+    for start in range(0, len(qids), batch_size):
+        chunk = qids[start:start + batch_size]
+        payload = _wikipedia_api("www.wikidata.org", {
+            "action": "wbgetentities", "ids": "|".join(chunk), "props": "sitelinks",
+        }, label="sitelinks")
+        for qid, entity in ((payload or {}).get("entities") or {}).items():
+            out[qid] = {site[:-4]: link["title"]
+                        for site, link in (entity.get("sitelinks") or {}).items()
+                        if site.endswith("wiki") and site != "commonswiki"}
+        time.sleep(SLEEP_WIKI)
+    return out
+
+
+def inspect_resolution(site_ids, frame, mapping, id_col="site_id"):
+    """Why each of these sites got the article it did.
+
+    Shows the pick next to every Wikipedia the resolved Wikidata item actually links
+    to. When the pick looks poor and `on_item` is just as poor, the item is the
+    problem, not the ranking: Wikidata sometimes splits the inscription and its subject
+    into two items, and each carries only part of the sitelinks.
+    """
+    wanted = {str(i) for i in site_ids}
+    labels = {str(r[id_col]): r.get("label")
+              for r in frame.drop_duplicates(id_col).to_dict("records")}
+    entries = {key: mapping.get(key) or {} for key in wanted}
+    qids = [(entry.get("wikidata_url") or "").rsplit("/", 1)[-1]
+            for entry in entries.values() if entry.get("wikidata_url")]
+    links = wikidata_sitelinks(qids)
+
+    rows = []
+    for key in sorted(wanted):
+        entry = entries[key]
+        qid = (entry.get("wikidata_url") or "").rsplit("/", 1)[-1] or None
+        on_item = links.get(qid, {})
+        best = min(on_item, key=article_rank) if on_item else None
+        rows.append({
+            id_col: key,
+            "label": labels.get(key),
+            "ours": entry.get("wiki_title"),
+            "lang": entry.get("wiki_language"),
+            "item": qid,
+            "on_item": ", ".join(sorted(on_item, key=article_rank)) or "none",
+            "best_on_item": best,
+            "pick_is_best": (best == entry.get("wiki_language")) if best else None,
+        })
+    return pd.DataFrame(rows)
+
+
 def crosscheck_articles(frame, mapping, listed, id_col="site_id", key=None):
     """Rows where the resolution chain and Wikipedia's list disagree.
 

@@ -178,6 +178,8 @@ Only disagreements are reported, ranked by how actionable they are:
 
 Nothing is adopted automatically. An optional cell in each section takes the statuses or the specific ids you name and resolves each title through Wikipedia, so a redirect lands on its target and the entry carries the same fields the rest of the chain produces.
 
+A last cell inspects a single site, putting the article the chain picked next to every Wikipedia the resolved Wikidata item actually links to. That separates the two ways a poor pick happens — the ranking chose badly, or the item had nothing better on it — and the second is the common one. Wikidata sometimes carries the inscription and its subject as two separate items, each holding part of the sitelinks. Site 1750, the Roças of São Tomé and Príncipe, is the clean example: the item bearing `P757 = 1750` links only Dutch, Hebrew and Lithuanian, so the chain correctly took Dutch as the best of those, while [the French article](https://fr.wikipedia.org/wiki/Ro%C3%A7as_de_Sao_Tom%C3%A9-et-Principe) hangs off a different item the join never sees. The `P757` lookup is right and still incomplete, which is the reason the cross-check above exists.
+
 ### Channel 5 — Wikipedia lead images
 
 What we take: a photograph for the sites that have none. 56 sites have an empty image column — 12 World Heritage properties (Lorentz National Park, Serra da Capivara and the Great Living Chola Temples among them) and 44 geoparks — and they fall back to the lead image of their Wikipedia article: `action=query&prop=pageimages` at `pithumbsize=760`, the same width the popup asks the proxy for.
