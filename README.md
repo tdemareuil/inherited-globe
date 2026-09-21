@@ -335,9 +335,11 @@ If you refresh either export, update `WHC_EXPORT_DATE` / `GEOPARK_EXPORT_DATE` i
 ## Running the pipeline
 
 ```bash
-pip install pandas requests tqdm ipywidgets matplotlib jupyterlab
+pip install pandas requests tqdm pillow matplotlib jupyterlab
 jupyter lab pipeline.ipynb
 ```
+
+`ipywidgets` is optional: with it you get graphical progress bars, without it `tqdm.auto` falls back to text ones. Install it into the environment your **kernel** runs in, not whichever one `pip` happens to resolve to — a project virtualenv registered as its own kernel is easy to miss.
 
 Run the cells top to bottom. The configuration cell holds every knob; the six `RUN_*` flags gate the network stages so they can be skipped or re-run independently:
 

@@ -27,7 +27,9 @@ from pathlib import Path
 
 import pandas as pd
 import requests
-from tqdm.notebook import tqdm
+# tqdm.auto, not tqdm.notebook: the notebook bar needs ipywidgets and raises
+# ImportError without it, where auto quietly falls back to the text bar.
+from tqdm.auto import tqdm
 
 # ── Runtime configuration. The notebook calls configure() after defining its knobs. ──
 USER_AGENT = "InheritedGlobe/1.0 (https://github.com/tdemareuil/inherited-globe)"
