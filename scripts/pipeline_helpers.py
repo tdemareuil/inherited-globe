@@ -31,6 +31,51 @@ import requests
 # ImportError without it, where auto quietly falls back to the text bar.
 from tqdm.auto import tqdm
 
+# ── Progress-bar safety ───────────────────────────────────────────────────────
+# tqdm registers an instance in a class-level WeakSet before it builds its display.
+# tqdm.notebook's build raises ImportError when ipywidgets is missing, which leaves a
+# half-built bar in that registry — held alive by the traceback IPython keeps — for the
+# rest of the kernel's life. Every later tqdm.write() then refreshes it and dies with
+# "AttributeError: 'tqdm_notebook' object has no attribute 'container'", in a cell that
+# has nothing to do with progress bars. Two guards: drop those bars when this module is
+# imported or reloaded, and never let a write take a run down with it.
+
+
+def drop_broken_bars():
+    """Remove progress bars that failed mid-construction. Returns how many."""
+    registry = getattr(tqdm, "_instances", None)
+    if not registry:
+        return 0
+    broken = [bar for bar in list(registry) if not hasattr(bar, "container")
+              and type(bar).__module__.endswith("notebook")]
+    for bar in broken:
+        # close() short-circuits on a disabled bar, which keeps the garbage collector
+        # from tripping over the same missing attributes in __del__.
+        bar.disable = True
+        try:
+            registry.remove(bar)
+        except KeyError:
+            pass
+    return len(broken)
+
+
+def note(message):
+    """tqdm.write(), guarded against a bar that failed mid-construction.
+
+    Clearing first rather than catching afterwards: tqdm writes the message before it
+    refreshes the other bars, so a write that raises has already printed, and a retry
+    in the handler would print it twice.
+    """
+    drop_broken_bars()
+    try:
+        tqdm.write(message)
+    except Exception:
+        print(message)
+
+
+drop_broken_bars()
+
+
 # ── Runtime configuration. The notebook calls configure() after defining its knobs. ──
 USER_AGENT = "InheritedGlobe/1.0 (https://github.com/tdemareuil/inherited-globe)"
 WIKIMEDIA_TOKEN = ""  # Optional — raises rate limit from 500 to 5,000 req/hour
@@ -661,12 +706,12 @@ def _post_sparql(sparql, retries=4, timeout=90):
         except requests.exceptions.RequestException as exc:
             if attempt == retries - 1:
                 raise
-            tqdm.write(f"  [sparql] {exc} — retrying")
+            note(f"  [sparql] {exc} — retrying")
             time.sleep(2 ** attempt * 3)
             continue
         if response.status_code in (429, 500, 502, 503, 504):
             wait = wikimedia_retry_after(response, default=2 ** attempt * 5)
-            tqdm.write(f"  [sparql] HTTP {response.status_code} — waiting {wait}s")
+            note(f"  [sparql] HTTP {response.status_code} — waiting {wait}s")
             time.sleep(wait)
             continue
         response.raise_for_status()
@@ -708,7 +753,7 @@ def wikidata_entity_search(search_term, retries=3):
             )
             if response.status_code == 429:
                 wait = wikimedia_retry_after(response, default=2 ** attempt * 3)
-                tqdm.write(f"  [wbsearchentities] 429 — waiting {wait}s")
+                note(f"  [wbsearchentities] 429 — waiting {wait}s")
                 time.sleep(wait)
                 continue
             response.raise_for_status()
@@ -745,7 +790,7 @@ def wikipedia_direct_search(search_term, lang="en", retries=3):
             )
             if response.status_code == 429:
                 wait = wikimedia_retry_after(response, default=2 ** attempt * 3)
-                tqdm.write(f"  [wikipedia direct] 429 — waiting {wait}s")
+                note(f"  [wikipedia direct] 429 — waiting {wait}s")
                 time.sleep(wait)
                 continue
             response.raise_for_status()
@@ -858,6 +903,34 @@ def resolve_sites_by_name(unresolved, cache_path=None, languages=("en",)):
     save()
     print(f"  [name fallback] resolved {len(mapping)} sites")
     return mapping
+
+
+def articles_without_english(frame, mapping, id_col="site_id"):
+    """The rows with no English Wikipedia article behind them, and why.
+
+    Two kinds, told apart by the `status` column: `no article` for the ones nothing
+    resolved at all, and `<lang> only` for the ones that landed on another edition. The
+    resolver ranks English first, so the second kind means Wikidata lists no English
+    sitelink for that item — usually genuine for a local site, occasionally the sign of
+    a bad name match worth overriding.
+    """
+    rows = []
+    for record in frame.drop_duplicates(id_col).to_dict("records"):
+        entry = mapping.get(str(record[id_col])) or {}
+        language = entry.get("wiki_language")
+        if language == "en":
+            continue
+        rows.append({
+            id_col: record[id_col],
+            "label": record.get("label"),
+            "states": record.get("states"),
+            "status": f"{language} only" if entry.get("wiki_title") else "no article",
+            "wiki_title": entry.get("wiki_title"),
+            "wiki_lookup_source": entry.get("wiki_lookup_source"),
+            "wikidata_url": entry.get("wikidata_url"),
+        })
+    return pd.DataFrame(rows, columns=[id_col, "label", "states", "status",
+                                       "wiki_title", "wiki_lookup_source", "wikidata_url"])
 
 
 def attach_wikidata_fields(frame, mapping, id_col="site_id"):
@@ -1021,17 +1094,17 @@ def get_pageviews(project, title, retries=4):
                 return 0
             if response.status_code == 429:
                 wait = wikimedia_retry_after(response, default=30)
-                tqdm.write(f"  [pageviews] 429 for {title!r} — waiting {wait}s")
+                note(f"  [pageviews] 429 for {title!r} — waiting {wait}s")
                 time.sleep(wait)
                 continue
             if not response.ok:
-                tqdm.write(f"  [pageviews] HTTP {response.status_code} for {title!r}")
+                note(f"  [pageviews] HTTP {response.status_code} for {title!r}")
                 return 0
             return sum(item["views"] for item in response.json().get("items", []))
         except Exception as exc:
-            tqdm.write(f"  [pageviews] error for {title!r}: {exc}")
+            note(f"  [pageviews] error for {title!r}: {exc}")
             return 0
-    tqdm.write(f"  [pageviews] gave up after {retries} retries for {title!r}")
+    note(f"  [pageviews] gave up after {retries} retries for {title!r}")
     return 0
 
 
@@ -1090,14 +1163,14 @@ def _wikipedia_api(project, params, retries=3, label="wikipedia"):
                                     headers=wikimedia_headers(), timeout=20)
             if response.status_code == 429:
                 wait = wikimedia_retry_after(response, default=2 ** attempt * 3)
-                tqdm.write(f"  [{label}] 429 — waiting {wait}s")
+                note(f"  [{label}] 429 — waiting {wait}s")
                 time.sleep(wait)
                 continue
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as exc:
             if attempt == retries - 1:
-                tqdm.write(f"  [{label}] {exc}")
+                note(f"  [{label}] {exc}")
                 return None
             time.sleep(2 ** attempt * 2)
     return None
@@ -1313,7 +1386,7 @@ def reduce_image_locally(url, dest_path, max_edge=None, quality=None, timeout=30
             image.save(dest_path, format="JPEG", quality=quality,
                        optimize=True, progressive=True)
     except (requests.exceptions.RequestException, OSError, ValueError) as exc:
-        tqdm.write(f"  [reduce] {type(exc).__name__}: {exc} — {url[:90]}")
+        note(f"  [reduce] {type(exc).__name__}: {exc} — {url[:90]}")
         return None
     finally:
         Image.MAX_IMAGE_PIXELS = previous_limit
