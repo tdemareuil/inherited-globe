@@ -172,6 +172,11 @@ class _Review:
         temporary.write_text(json.dumps(self.decisions, ensure_ascii=False, indent=1))
         os.replace(temporary, self.path)
 
+    def pending(self):
+        """How many queued sites still have no decision."""
+        return sum(1 for item in self.queue
+                   if not (self.decisions.get(str(item["site_id"])) or {}).get("chosen"))
+
     def stop(self):
         if self._server:
             self._server.shutdown()
@@ -180,8 +185,18 @@ class _Review:
         return len(self.decisions)
 
 
+_SERVERS = {}
+
+
 def serve(queue, decisions_path, port=8765):
-    """Start the review page in a background thread and return a handle."""
+    """Start the review page in a background thread and return a handle.
+
+    Re-running this replaces whatever is already on the port, so a cell run twice
+    reopens the page instead of failing on an address still in use.
+    """
+    previous = _SERVERS.pop(port, None)
+    if previous:
+        previous.stop()
     review = _Review(queue, decisions_path, port)
 
     class Handler(BaseHTTPRequestHandler):
@@ -209,4 +224,5 @@ def serve(queue, decisions_path, port=8765):
     review._server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     review._thread = threading.Thread(target=review._server.serve_forever, daemon=True)
     review._thread.start()
+    _SERVERS[port] = review
     return review
