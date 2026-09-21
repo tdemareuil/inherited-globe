@@ -138,7 +138,17 @@ What we take: the cultural popularity score. Given the article title from Wikida
 
 Pageviews are fetched once per unique article and then filled back onto every label point of the property, so a serial property with two label points costs one request rather than two. Both datasets share one cache, so an article a geopark happens to share with a World Heritage property is only ever fetched once.
 
-An optional [Wikimedia API token](https://api.wikimedia.org/) in the git-ignored `data/secrets/wikimedia_token.txt` raises the rate limit from 500 to 5,000 req/hour. The pageviews endpoint is IP-limited and does not honour the token, so that stage stays paced at roughly one request per second either way.
+A [Wikimedia API token](https://api.wikimedia.org/) in the git-ignored `data/secrets/wikimedia_token.txt` raises the rate limit from 500 to 5,000 req/hour. It is worth having: `SLEEP_WIKI` is set to 0.15 s on the assumption of a token (~6.6 req/s), where the unauthenticated ceiling is 0.14 req/s, so the name-fallback stage would otherwise spend its time backing off 429s.
+
+Save the file however api.wikimedia.org gives it to you. The portal hands you a three-field block with unquoted keys —
+
+```
+{client_application_key: …, client_application_secret: …, access_token: …}
+```
+
+— and `read_local_secret()` pulls `access_token` out of it, so pasting the whole thing works. A file holding nothing but the token works too, as does a JSON object. Note that the block also contains the client secret, which is why `data/secrets/` is git-ignored.
+
+The pageviews endpoint is IP-limited and does not honour the token, so that stage stays paced at roughly one request per second either way.
 
 ---
 

@@ -128,10 +128,37 @@ def set_pageview_window(start, end):
     configure(START=start, END=end)
 
 
+# api.wikimedia.org hands you the whole credential block when you create a personal API
+# token, and the obvious thing to do is save it as-is:
+#
+#   {client_application_key: 7f3…, client_application_secret: 9ab…, access_token: eyJ0…}
+#
+# Only the access token belongs in an Authorization header, and that block is neither JSON
+# (the keys are unquoted) nor a Python literal, so it is matched directly. A file holding
+# nothing but the token still works, which is the other way people save it.
+_ACCESS_TOKEN_RE = re.compile(
+    r"""["']?access_token["']?\s*[:=]\s*["']?([A-Za-z0-9._\-]+)["']?""")
+
+
 def read_local_secret(path):
-    """Read a local secret file ignored by git, returning an empty string if absent."""
+    """Read a local secret file ignored by git, returning an empty string if absent.
+
+    Accepts a bare token, a JSON object, or the credential block api.wikimedia.org
+    displays; in the latter two cases the `access_token` field is what comes back.
+    """
     path = Path(path)
-    return path.read_text().strip() if path.exists() else ""
+    if not path.exists():
+        return ""
+    raw = path.read_text().strip()
+    if not raw:
+        return ""
+    if raw.startswith(("{", "[")) or "access_token" in raw:
+        match = _ACCESS_TOKEN_RE.search(raw)
+        if match:
+            return match.group(1)
+        print(f"  [secret] {path} looks structured but has no access_token field")
+        return ""
+    return raw
 
 
 def clean_str(value):
