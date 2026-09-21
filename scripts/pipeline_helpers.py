@@ -366,6 +366,14 @@ def category_color_key(category, in_danger):
 
 # Trailing clauses UNESCO uses to qualify a property, dropped from the globe label
 # because the full inscription name is often a sentence. The full name stays in the popup.
+def truncate_text(text, max_chars):
+    """Cut a description to max_chars on a word boundary. None = keep it whole."""
+    text = clean_str(text)
+    if max_chars is None or len(text) <= max_chars:
+        return text
+    return text[:max_chars].rsplit(" ", 1)[0] + "\u2026"
+
+
 _LABEL_SPLIT_TOKENS = [" – ", " — ", " -- ", ": ", " and Associated ", " and its Associated "]
 
 
@@ -824,8 +832,7 @@ def resolve_sites_by_name(unresolved, cache_path=None, languages=("en",)):
 
     def save():
         if cache_path:
-            cache_path.parent.mkdir(parents=True, exist_ok=True)
-            cache_path.write_text(json.dumps(mapping, ensure_ascii=False, indent=1))
+            write_json_atomic(cache_path, mapping)
 
     for site_id, name, states in tqdm(pending, desc="Name fallback"):
         entry = None
@@ -1026,6 +1033,24 @@ def get_pageviews(project, title, retries=4):
             return 0
     tqdm.write(f"  [pageviews] gave up after {retries} retries for {title!r}")
     return 0
+
+
+def fetch_pageviews(articles, counts, cache_path, desc="Pageviews"):
+    """Fill `counts` with the view total for every (project, title) it is missing.
+
+    Both lists share one cache, so an article a geopark and a World Heritage property
+    resolve to is only ever fetched once. The cache is flushed every 100 articles, so a
+    run interrupted halfway keeps what it had. Returns the number actually fetched.
+    """
+    pending = [pair for pair in articles if f"{pair[0]}|{pair[1]}" not in counts]
+    print(f"querying {len(pending):,} articles")
+    for index, (project, title) in enumerate(tqdm(pending, desc=desc), start=1):
+        counts[f"{project}|{title}"] = get_pageviews(project, title)
+        time.sleep(SLEEP_PAGEVIEWS)
+        if index % 100 == 0:
+            write_json_atomic(cache_path, counts)
+    write_json_atomic(cache_path, counts)
+    return len(pending)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

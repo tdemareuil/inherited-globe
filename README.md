@@ -360,7 +360,7 @@ A full cold run takes roughly 30–50 minutes. Re-runs are near-instant: everyth
 
 There are four checkpoints — after parsing, after Wikidata, after pageviews, and after the geoparks — so any stage can be re-entered on its own.
 
-The notebook ends with quality-check cells — popularity distribution, coverage by category and region, the least-viewed sites, and labels still long enough to crowd the globe — all of them over the combined frame.
+The notebook ends with quality-check cells — the popularity distribution, coverage by category and region, and labels still long enough to crowd the globe — all of them over the combined frame.
 
 Preview locally with any static server:
 
