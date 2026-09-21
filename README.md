@@ -14,6 +14,7 @@ Where the endangered globe maps what we are about to lose, this one maps what wa
   - [Channel 3 — Wikidata (SPARQL API)](#channel-3--wikidata-sparql-api)
   - [Channel 4 — Wikipedia Pageviews (public REST API)](#channel-4--wikipedia-pageviews-public-rest-api)
   - [Channel 5 — Wikipedia lead images](#channel-5--wikipedia-lead-images)
+  - [Cross-check against Wikipedia's own lists](#cross-check-against-wikipedias-own-lists)
 - [Python Pipeline](#python-pipeline)
   - [Step 1 — Parsing & label points](#step-1--parsing--label-points)
   - [Step 2 — Popularity harvesting](#step-2--popularity-harvesting)
@@ -150,6 +151,32 @@ Save the file however api.wikimedia.org gives it to you. The portal hands you a 
 — and `read_local_secret()` pulls `access_token` out of it, so pasting the whole thing works. A file holding nothing but the token works too, as does a JSON object. Note that the block also contains the client secret, which is why `data/secrets/` is git-ignored.
 
 The pageviews endpoint is IP-limited and does not honour the token, so that stage stays paced at roughly one request per second either way.
+
+### Cross-check against Wikipedia's own lists
+
+The resolution chain in Channel 3 works one item at a time, so a site whose Wikidata entry carries no `P757` or no English sitelink falls through it even when a perfectly good English article exists. Wikipedia's own curated lists catch exactly that, and the pipeline reads them as **wikitext rather than rendered HTML** — templates stay unexpanded, which keeps the several hundred navbox links on a country page out of what gets parsed.
+
+For the World Heritage list, [List of World Heritage Sites by year of inscription](https://en.wikipedia.org/wiki/List_of_World_Heritage_Sites_by_year_of_inscription) is the one page worth reading: every row names both the article and the UNESCO record, as
+
+```
+| {{flag|Canada}} || [[Nahanni National Park Reserve|Nahanni National Park]] || Natural || [https://whc.unesco.org/en/list/24 24]
+```
+
+so the comparison joins on the identifier and never guesses from a name. The country sits in a `{{flag}}` template rather than a link, which is why a row's first wikilink is reliably the site — checked against the export's own country names, with no false hits. 1,267 of the 1,273 sites are linked plainly, 6 through a section anchor, and 4 not at all.
+
+The geopark pages ([UNESCO Global Geoparks](https://en.wikipedia.org/wiki/UNESCO_Global_Geoparks) and its five regional lists) carry no identifier, so that join is on the plain name — *Fangshan*, not *Fangshan UNESCO Global Geopark* — normalised the same way the designation index is. Both halves of each link are indexed, since the table writes `[[Fangshan District|Fangshan]]`. These lists are incomplete, so a geopark missing from them means nothing.
+
+Only disagreements are reported, ranked by how actionable they are:
+
+| status | what it means |
+|---|---|
+| `no_article` | the chain found nothing and the list names one |
+| `other_language` | the chain found only a non-English edition |
+| `different_article` | both name an English article and they differ — often a redirect pair (*Via Appia* / *Appian Way*) |
+| `section_link` | the list points into a section of a broader article (*Ravenna*) and the chain found nothing better. Fine as a destination, but the pageviews counted are the whole article's |
+| `ours_is_narrower` | same, except the chain found a dedicated English page: *Persian Qanat* against the list's *Qanat*. Ours is more precise, so it stands |
+
+Nothing is adopted automatically. An optional cell in each section takes the statuses or the specific ids you name and resolves each title through Wikipedia, so a redirect lands on its target and the entry carries the same fields the rest of the chain produces.
 
 ### Channel 5 — Wikipedia lead images
 
@@ -367,6 +394,7 @@ Run the cells top to bottom. The configuration cell holds every knob; the six `R
 | `RUN_GEOPARK_DESIGNATION` | designated-item name match for the geoparks | one SPARQL query + one sitelink batch, <1 min |
 | `RUN_GEOPARK_NAME_FALLBACK` | name-based resolution for the ~100 left over | one or more lookups per unresolved geopark |
 | `RUN_GEOPARK_PAGEVIEWS` | 12-month view counts for the geoparks | ~1 req/s per unique article (~4 min) |
+| `RUN_ARTICLE_CROSSCHECK` | read Wikipedia's own list pages and compare | 7 page fetches, seconds |
 | `RUN_WIKIPEDIA_THUMBNAILS` | lead image for the sites whose export has none | 2 requests per site, 56 sites, ~1 min |
 | `RUN_PROXY_CHECK` | one `HEAD` per main photo through the resizing proxy | 1,458 requests, 8 at a time, ~6 min, cached |
 | `RUN_LOCAL_REDUCTION` | download and shrink whatever the proxy refuses | 7 photos, ~300 MB, ~10 min |

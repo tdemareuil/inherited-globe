@@ -1080,6 +1080,168 @@ def resolve_geoparks_by_designation(geoparks, name_index=None):
 # the labels.
 # ══════════════════════════════════════════════════════════════════════════════
 
+# ══════════════════════════════════════════════════════════════════════════════
+# 4. Cross-check against Wikipedia's own list pages
+#
+# The resolution chain above works item by item, so a site whose Wikidata item lacks
+# P757 or an English sitelink falls through it even when a perfectly good English
+# article exists. Wikipedia's own curated lists catch exactly that case, and they are
+# read from wikitext rather than rendered HTML: templates stay unexpanded, which keeps
+# the hundreds of navbox links on a country page out of what gets parsed.
+# ══════════════════════════════════════════════════════════════════════════════
+
+WHC_LIST_PAGE = "List of World Heritage Sites by year of inscription"
+GEOPARK_LIST_PAGES = [
+    "UNESCO Global Geoparks",
+    "List of UNESCO Global Geoparks in Africa",
+    "List of UNESCO Global Geoparks in Asia",
+    "List of UNESCO Global Geoparks in Europe",
+    "List of UNESCO Global Geoparks in North America",
+    "List of UNESCO Global Geoparks in Latin America",
+]
+
+# target, optional #section anchor, optional |display text
+_WIKILINK_RE = re.compile(r"\[\[([^\]|]+?)(#[^\]|]*)?(?:\|([^\]]*))?\]\]")
+_WHC_LIST_ID_RE = re.compile(r"whc\.unesco\.org/en/list/(\d+)")
+
+
+def fetch_wikitext(page, project="en.wikipedia.org", retries=3):
+    """The raw wikitext of one page, templates left unexpanded."""
+    payload = _wikipedia_api(project, {"action": "parse", "page": page,
+                                       "prop": "wikitext", "formatversion": 2},
+                             retries=retries, label="wikitext")
+    return ((payload or {}).get("parse") or {}).get("wikitext") or ""
+
+
+def parse_whc_list(wikitext):
+    """site_id -> English article, from the rows that carry both.
+
+    Each row of the by-year table links the article and then the UNESCO record, as
+    `[[Nahanni National Park Reserve]] || Natural || [https://whc.unesco.org/en/list/24 24]`,
+    so the join is on the identifier and no name matching is involved. The country sits
+    in a {{flag}} template rather than a link, which is why the row's first wikilink is
+    reliably the site.
+    """
+    articles = {}
+    for line in wikitext.splitlines():
+        match = _WHC_LIST_ID_RE.search(line)
+        if not match:
+            continue
+        links = [(target.strip(), bool(anchor))
+                 for target, anchor, _ in _WIKILINK_RE.findall(line) if target.strip()]
+        if links:
+            target, section = links[0]
+            articles.setdefault(int(match.group(1)), {"title": target, "section": section})
+    return articles
+
+
+def parse_geopark_list(wikitext, articles=None):
+    """normalised geopark name -> English article, from table rows.
+
+    These pages carry no identifier, so the join has to be on the name, and both halves
+    of a link are indexed: the table writes `[[Fangshan District|Fangshan]]` where the
+    export says "Fangshan UNESCO Global Geopark". Only table rows are read, and bare
+    country names are skipped, so the prose and the country columns cannot supply a
+    match.
+    """
+    articles = {} if articles is None else articles
+    countries = {name.casefold() for name in COUNTRY_NAMES.values()}
+    for line in wikitext.splitlines():
+        if not line.lstrip().startswith("|"):
+            continue
+        for target, anchor, display in _WIKILINK_RE.findall(line):
+            target = target.strip()
+            if not target or ":" in target:
+                continue
+            for name in (display or "", target):
+                if not name or name.strip().casefold() in countries:
+                    continue
+                key = geopark_name_key(geopark_plain_name(name))
+                if key and key not in articles:
+                    articles[key] = {"title": target, "section": bool(anchor)}
+    return articles
+
+
+def _title_key(title):
+    """Compare titles the way MediaWiki does: underscores are spaces, case is loose."""
+    return clean_str(title).replace("_", " ").strip().casefold()
+
+
+def crosscheck_articles(frame, mapping, listed, id_col="site_id", key=None):
+    """Rows where the resolution chain and Wikipedia's list disagree.
+
+    `listed` maps a join key to an English article; `key` derives that join key from a
+    row, defaulting to the id. Only disagreements come back, each with a `status`:
+    `no_article` when the chain found nothing, `other_language` when it found only a
+    non-English edition, `different_article` when both name an English one and they
+    differ. Agreement, and rows the list does not cover, are left out.
+    """
+    rows = []
+    for record in frame.drop_duplicates(id_col).to_dict("records"):
+        reference = listed.get(key(record) if key else record[id_col]) or {}
+        title_listed = reference.get("title")
+        if not title_listed:
+            continue
+        entry = mapping.get(str(record[id_col])) or {}
+        title, language = entry.get("wiki_title"), entry.get("wiki_language")
+        if language == "en" and _title_key(title) == _title_key(title_listed):
+            continue
+        if reference.get("section"):
+            # The list points into a section of a broader article — "Ravenna" for the
+            # Early Christian Monuments of Ravenna. A fair place to send a reader, but
+            # the pageviews counted are the whole article's. If the chain already found
+            # a dedicated English page, that one is the narrower of the two and stands.
+            status = "ours_is_narrower" if language == "en" else "section_link"
+        elif not title:
+            status = "no_article"
+        elif language != "en":
+            status = "other_language"
+        else:
+            status = "different_article"
+        rows.append({
+            id_col: record[id_col],
+            "label": record.get("label"),
+            "status": status,
+            "ours": title,
+            "our_language": language,
+            "wikipedia_lists": title_listed,
+            "our_source": entry.get("wiki_lookup_source"),
+        })
+    order = {"no_article": 0, "other_language": 1, "different_article": 2,
+             "section_link": 3, "ours_is_narrower": 4}
+    frame = pd.DataFrame(rows, columns=[id_col, "label", "status", "ours",
+                                        "our_language", "wikipedia_lists", "our_source"])
+    if len(frame):
+        frame = frame.sort_values("status", key=lambda c: c.map(order)).reset_index(drop=True)
+    return frame
+
+
+def apply_listed_articles(mapping, conflicts, statuses=(), ids=(), id_col="site_id"):
+    """Point selected conflicts at the article Wikipedia's list names.
+
+    Each title goes through wikipedia_direct_search, so a redirect resolves to its
+    target and the entry carries the same fields the rest of the chain produces.
+    Returns the ids actually changed.
+    """
+    statuses, ids = set(statuses), {str(i) for i in ids}
+    changed = []
+    if not len(conflicts):
+        return changed
+    selected = conflicts[conflicts["status"].isin(statuses)
+                         | conflicts[id_col].astype(str).isin(ids)]
+    for record in tqdm(selected.to_dict("records"), desc="Listed articles"):
+        entry = wikipedia_direct_search(record["wikipedia_lists"], lang="en")
+        time.sleep(SLEEP_WIKI)
+        if not entry:
+            note(f"  [crosscheck] no page for {record['wikipedia_lists']!r}")
+            continue
+        entry["wiki_lookup_source"] = "wikipedia_list"
+        entry["wikidata_url"] = (mapping.get(str(record[id_col])) or {}).get("wikidata_url")
+        mapping[str(record[id_col])] = entry
+        changed.append(record[id_col])
+    return changed
+
+
 def get_pageviews(project, title, retries=4):
     """Return total Wikipedia views over the configured window for one project/title."""
     if not clean_str(title):
