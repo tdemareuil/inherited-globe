@@ -2325,7 +2325,9 @@
             const sourceLinks = [
                 unescoHref ? `<a href="${escapeHtml(unescoHref)}" target="_blank" rel="noopener noreferrer">UNESCO</a>` : '',
                 wikiHref
-                    ? `<a href="${escapeHtml(wikiHref)}" target="_blank" rel="noopener noreferrer">Wikipedia</a>`
+                    ? `<a href="${escapeHtml(wikiHref)}" target="_blank" rel="noopener noreferrer"${
+                        wiki_title ? ` title="${escapeHtml(String(wiki_title).replace(/_/g, ' '))}"` : ''
+                      }>Wikipedia</a>`
                     : '<span class="popup-source-pending" title="No Wikipedia article resolved for this site yet">Wikipedia</span>',
                 wikidataHref ? `<a href="${escapeHtml(wikidataHref)}" target="_blank" rel="noopener noreferrer">Wikidata</a>` : '',
             ].filter(Boolean).join(' <span aria-hidden="true">|</span> ');

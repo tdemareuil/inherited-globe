@@ -13,6 +13,7 @@ compute from polygons.
 
 from __future__ import annotations
 
+import difflib
 import html
 import io
 import json
@@ -106,6 +107,7 @@ WIKIDATA_FIELDS = [
     "wiki_url",
     "wikidata_url",
 ]
+
 
 # UNESCO's five programme regions, as written in the official export.
 UNESCO_REGIONS = [
@@ -1124,14 +1126,24 @@ def parse_whc_list(wikitext):
     """
     articles = {}
     for line in wikitext.splitlines():
+        # Table rows only. The lead paragraph cites the convention's own record and
+        # would otherwise contribute "UNESCO" and "cultural heritage" as candidates.
+        if not line.lstrip().startswith("|"):
+            continue
         match = _WHC_LIST_ID_RE.search(line)
         if not match:
             continue
         links = [(target.strip(), bool(anchor))
                  for target, anchor, _ in _WIKILINK_RE.findall(line) if target.strip()]
         if links:
+            # A serial property often links one article per component — "Ancient Ksour
+            # of Ouadane, Chinguetti, Tichitt and Oualata" links all four towns. The
+            # first is the primary candidate; the rest are offered alongside it.
             target, section = links[0]
-            articles.setdefault(int(match.group(1)), {"title": target, "section": section})
+            articles.setdefault(int(match.group(1)), {
+                "title": target, "section": section,
+                "titles": [t for t, _ in links],
+            })
     return articles
 
 
@@ -1165,6 +1177,240 @@ def parse_geopark_list(wikitext, articles=None):
 def _title_key(title):
     """Compare titles the way MediaWiki does: underscores are spaces, case is loose."""
     return clean_str(title).replace("_", " ").strip().casefold()
+
+
+# ── Candidate articles for the doubtful cases ─────────────────────────────────
+# A site can end up on a poor article for a reason no rule fixes: Wikidata splits the
+# inscription from its subject, or the good article simply cites no UNESCO identifier
+# to match on — fr:Roças de Sao Tomé-et-Principe cites none at all. Full-text search
+# finds those, but it guesses, so its hits are offered for review rather than adopted.
+
+CANDIDATE_LANGUAGES = ("en", "fr")   # searched, best rank first; widen if you want more
+CANDIDATE_MIN_SCORE = 0.45      # below this a hit is not worth showing
+CANDIDATE_SURE_SCORE = 0.92     # at or above, and better ranked, it needs no review
+
+
+def title_similarity(left, right):
+    """0-1 similarity between two article/site names, punctuation and case ignored."""
+    return difflib.SequenceMatcher(None, _title_key(left), _title_key(right)).ratio()
+
+
+def search_articles(term, lang="en", limit=3, retries=3):
+    """Top full-text search hits on one Wikipedia, as (lang, title) pairs."""
+    term = clean_str(term)
+    if not term:
+        return []
+    payload = _wikipedia_api(f"{lang}.wikipedia.org", {
+        "action": "query", "list": "search", "srsearch": term,
+        "srlimit": limit, "srnamespace": 0,
+    }, retries=retries, label="search")
+    hits = ((payload or {}).get("query") or {}).get("search") or []
+    return [(lang, hit["title"]) for hit in hits]
+
+
+def article_candidates(name, current_language=None, languages=CANDIDATE_LANGUAGES,
+                       limit=3):
+    """Ranked candidate articles for one site name.
+
+    Only languages that would improve on the current pick are searched, so a site
+    already on English is not searched at all. Each candidate carries the similarity
+    of its title to the site name, which is what separates a confident match from one
+    worth a human glance.
+    """
+    ceiling = article_rank(current_language) if current_language else len(
+        WIKIPEDIA_LANGUAGE_PRIORITY)
+    candidates = []
+    for lang in languages:
+        if article_rank(lang) >= ceiling:
+            continue
+        for _, title in search_articles(name, lang=lang, limit=limit):
+            candidates.append({
+                "wiki_title": title,
+                "wiki_language": lang,
+                "wiki_project": f"{lang}.wikipedia.org",
+                "wiki_url": f"https://{lang}.wikipedia.org/wiki/"
+                            + urllib.parse.quote(title.replace(" ", "_")),
+                "wiki_rank": article_rank(lang),
+                "wiki_lookup_source": f"search_{lang}",
+                "score": round(title_similarity(name, title), 3),
+            })
+        time.sleep(SLEEP_WIKI)
+    return sorted(candidates, key=lambda c: (-c["score"], c["wiki_rank"]))
+
+
+def search_name(label, max_chars=60):
+    """The part of a site name worth searching on, without its explanatory subtitle."""
+    return short_label(label, max_chars) or clean_str(label)
+
+
+def build_review_queue(frame, mapping, listed=None, id_col="site_id", name_of=None,
+                       languages=CANDIDATE_LANGUAGES, adopt_sure=True):
+    """Sites whose article is missing or in a less-preferred language, with candidates.
+
+    Returns (queue, adopted). A candidate whose title all but matches the site name in
+    a better-ranked language is unambiguous, and with `adopt_sure` it goes straight
+    into the mapping and is reported in `adopted`. Everything else goes to `queue` for
+    the review interface, which is where the genuinely doubtful calls belong: the good
+    article often cites no UNESCO identifier to confirm it against, so search is the
+    only way to reach it and search guesses.
+    """
+    listed = listed or {}
+    name_of = name_of or (lambda row: search_name(row.get("label")))
+    queue, adopted = [], []
+
+    records = frame.drop_duplicates(id_col).to_dict("records")
+    for record in tqdm(records, desc="Candidates"):
+        key = str(record[id_col])
+        current = mapping.get(key) or {}
+        reference = listed.get(record[id_col]) or listed.get(key) or {}
+
+        # Two reasons to ask: the article is missing or in a less-preferred language,
+        # or the chain and Wikipedia's own list name different English articles and
+        # neither is obviously right. The second costs no requests — a site already on
+        # English searches nothing, since no language would improve on it.
+        on_english = current.get("wiki_language") == "en"
+        disputed = bool(reference.get("title")) and (
+            _title_key(reference["title"]) != _title_key(current.get("wiki_title")))
+        if on_english and not disputed:
+            continue
+
+        name = name_of(record)
+        candidates = []
+        if current.get("wiki_title"):
+            candidates.append({
+                "wiki_title": current["wiki_title"],
+                "wiki_language": current.get("wiki_language"),
+                "wiki_project": current.get("wiki_project"),
+                "wiki_url": current.get("wiki_url"),
+                "wiki_rank": article_rank(current.get("wiki_language")),
+                "wiki_lookup_source": current.get("wiki_lookup_source") or "current",
+                "score": round(title_similarity(name, current["wiki_title"]), 3),
+                "current": True,
+            })
+        for listed_title in reference.get("titles") or ([reference["title"]]
+                                                       if reference.get("title") else []):
+            candidates.append({
+                "wiki_title": listed_title, "wiki_language": "en",
+                "wiki_project": "en.wikipedia.org",
+                "wiki_url": "https://en.wikipedia.org/wiki/"
+                            + urllib.parse.quote(listed_title.replace(" ", "_")),
+                "wiki_rank": article_rank("en"),
+                "wiki_lookup_source": "wikipedia_list",
+                "score": round(title_similarity(name, listed_title), 3),
+            })
+        candidates += article_candidates(name, current.get("wiki_language"),
+                                         languages=languages)
+
+        seen, unique = set(), []
+        for candidate in sorted(candidates, key=lambda c: (-c["score"], c["wiki_rank"])):
+            signature = (candidate["wiki_language"], _title_key(candidate["wiki_title"]))
+            # The pipeline's own pick and the list's are always shown, however they
+            # score: the whole point is to choose between them.
+            keep = candidate.get("current") or candidate["wiki_lookup_source"] == "wikipedia_list"
+            if signature in seen or (candidate["score"] < CANDIDATE_MIN_SCORE and not keep):
+                continue
+            seen.add(signature)
+            unique.append(candidate)
+        if len(unique) < 2 and not any(not c.get("current") for c in unique):
+            continue
+
+        best = unique[0]
+        if (adopt_sure and not disputed and best["score"] >= CANDIDATE_SURE_SCORE
+                and best["wiki_rank"] < article_rank(current.get("wiki_language"))):
+            entry = {k: v for k, v in best.items() if k != "score"}
+            entry["wikidata_url"] = current.get("wikidata_url")
+            mapping[key] = entry
+            adopted.append({id_col: record[id_col], "label": record.get("label"),
+                            "took": best["wiki_title"], "score": best["score"]})
+            continue
+
+        queue.append({
+            "site_id": record[id_col], "label": record.get("label"),
+            "states": record.get("states"), "search_name": name,
+            "current": {k: current.get(k) for k in
+                        ("wiki_title", "wiki_language", "wiki_url")} if current else None,
+            "candidates": unique[:6],
+        })
+    return queue, adopted
+
+
+_CONTENT_WORD_RE = re.compile(r"[^\W\d_]{4,}", re.UNICODE)
+
+
+def fetch_extracts(pairs, batch_size=20):
+    """(lang, title) -> the article's opening text, 20 titles per request."""
+    extracts, by_language = {}, {}
+    for lang, title in dict.fromkeys(pairs):
+        by_language.setdefault(lang, []).append(title)
+    for lang, titles in by_language.items():
+        for start in tqdm(range(0, len(titles), batch_size), desc=f"Extracts {lang}"):
+            chunk = titles[start:start + batch_size]
+            payload = _wikipedia_api(f"{lang}.wikipedia.org", {
+                "action": "query", "prop": "extracts", "exintro": 1, "explaintext": 1,
+                "exlimit": batch_size, "redirects": 1, "titles": "|".join(chunk),
+            }, label="extracts")
+            for page in (((payload or {}).get("query") or {}).get("pages") or {}).values():
+                if page.get("title"):
+                    extracts[(lang, page["title"])] = page.get("extract") or ""
+            time.sleep(SLEEP_WIKI)
+    return extracts
+
+
+def description_match(text, description):
+    """How much of the shorter text's vocabulary the other one also uses, 0-1.
+
+    An overlap coefficient rather than a Jaccard, because a site description and an
+    article intro are rarely the same length and the shared vocabulary is the signal.
+    """
+    left = {w.casefold() for w in _CONTENT_WORD_RE.findall(strip_tags(text or ""))}
+    right = {w.casefold() for w in _CONTENT_WORD_RE.findall(strip_tags(description or ""))}
+    if not left or not right:
+        return 0.0
+    return round(len(left & right) / min(len(left), len(right)), 3)
+
+
+def rank_by_description(queue, frame, id_col="site_id", description_col="short_description"):
+    """Score each candidate against the site's own description, and mark a challenger.
+
+    Where a list row links several articles — the four towns of the Ancient Ksour, say —
+    the titles alone cannot separate them. Reading each article's opening against the
+    site's description can: `text_score` is that overlap, and the best-scoring challenger
+    to the pipeline's own pick is marked `suggested`, highlighted in the review page and
+    freely overridden there.
+    """
+    descriptions = {str(r[id_col]): r.get(description_col)
+                    for r in frame.drop_duplicates(id_col).to_dict("records")}
+    pairs = [(c["wiki_language"], c["wiki_title"])
+             for item in queue for c in item["candidates"]]
+    extracts = fetch_extracts(pairs)
+
+    for item in queue:
+        description = descriptions.get(str(item["site_id"])) or ""
+        for candidate in item["candidates"]:
+            candidate["text_score"] = description_match(
+                extracts.get((candidate["wiki_language"], candidate["wiki_title"]), ""),
+                description)
+        challengers = [c for c in item["candidates"] if not c.get("current")]
+        challengers.sort(key=lambda c: -c["text_score"])
+        item["suggested"] = (challengers[0]["wiki_url"]
+                             if challengers and challengers[0]["text_score"] else None)
+    return queue
+
+
+def apply_review_decisions(mapping, decisions):
+    """Write the article chosen in the review into the mapping — one per site."""
+    changed = []
+    for key, choice in (decisions or {}).items():
+        chosen = (choice or {}).get("chosen")
+        if not chosen:
+            continue
+        entry = {k: v for k, v in chosen.items()
+                 if k not in ("score", "text_score", "current")}
+        entry.setdefault("wikidata_url", (mapping.get(key) or {}).get("wikidata_url"))
+        entry["wiki_lookup_source"] = "manual_review"
+        mapping[key] = entry
+        changed.append(key)
+    return changed
 
 
 def wikidata_sitelinks(qids, batch_size=50):

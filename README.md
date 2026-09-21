@@ -15,6 +15,7 @@ Where the endangered globe maps what we are about to lose, this one maps what wa
   - [Channel 4 — Wikipedia Pageviews (public REST API)](#channel-4--wikipedia-pageviews-public-rest-api)
   - [Channel 5 — Wikipedia lead images](#channel-5--wikipedia-lead-images)
   - [Cross-check against Wikipedia's own lists](#cross-check-against-wikipedias-own-lists)
+  - [Choosing, where no rule can](#choosing-where-no-rule-can)
 - [Python Pipeline](#python-pipeline)
   - [Step 1 — Parsing & label points](#step-1--parsing--label-points)
   - [Step 2 — Popularity harvesting](#step-2--popularity-harvesting)
@@ -179,6 +180,23 @@ Only disagreements are reported, ranked by how actionable they are:
 Nothing is adopted automatically. An optional cell in each section takes the statuses or the specific ids you name and resolves each title through Wikipedia, so a redirect lands on its target and the entry carries the same fields the rest of the chain produces.
 
 A last cell inspects a single site, putting the article the chain picked next to every Wikipedia the resolved Wikidata item actually links to. That separates the two ways a poor pick happens — the ranking chose badly, or the item had nothing better on it — and the second is the common one. Wikidata sometimes carries the inscription and its subject as two separate items, each holding part of the sitelinks. Site 1750, the Roças of São Tomé and Príncipe, is the clean example: the item bearing `P757 = 1750` links only Dutch, Hebrew and Lithuanian, so the chain correctly took Dutch as the best of those, while [the French article](https://fr.wikipedia.org/wiki/Ro%C3%A7as_de_Sao_Tom%C3%A9-et-Principe) hangs off a different item the join never sees. The `P757` lookup is right and still incomplete, which is the reason the cross-check above exists.
+
+### Choosing, where no rule can
+
+Some matches no rule settles, and site 1750 shows both reasons at once. Wikidata keeps the inscription and its subject as two items: the one carrying `P757 = 1750` links only Dutch, Hebrew and Lithuanian, so the chain correctly took Dutch as the best available, while [the French article](https://fr.wikipedia.org/wiki/Ro%C3%A7as_de_Sao_Tom%C3%A9-et-Principe) hangs off a different item — and being newly written, it cites no UNESCO record number to match on either. Nothing automatic reaches it. Full-text search does, but search guesses, so its hits are offered rather than adopted.
+
+Two kinds of case go into the review queue:
+
+- the article is **missing or not in English**, and a search of the preferred languages found something better. `CANDIDATE_LANGUAGES` defaults to English then French, so this costs one or two requests per site;
+- the chain and Wikipedia's list **name different English articles** and neither is clearly right. These cost nothing — a site already on English searches no language, because none would improve on it.
+
+A candidate whose title all but matches the site name in a better-ranked language is not in doubt (`CANDIDATE_SURE_SCORE`, 0.92), so it is adopted directly and merely reported.
+
+**One article per site reaches the globe, and the review is where it is chosen.** The page puts the pipeline's own pick — what the API resolution found, marked *in use* — next to its challengers: the article Wikipedia's index names, and, for a pick that is not in English, what the language search returned. Nothing is exported but the winner; `sites.geojson` carries the same five `wiki_*` fields it always did.
+
+**Ranking the challengers where a row links several articles.** An index row often links one article per component: *Ancient Ksour of Ouadane, Chinguetti, Tichitt and Oualata* links `Ksar` and all four towns, and 153 rows are like it. Titles alone cannot separate those, so each candidate's opening paragraph is read against the site's own description from the export, and the overlap of their vocabularies ranks them — `description_match`, an overlap coefficient rather than a Jaccard, since the two texts are rarely the same length. The closest challenger is marked *suggested* in the review page, which is a hint, not a default: nothing changes until a row is picked.
+
+**The review page** is `scripts/article_review.py`: the standard library only, since the kernel has no ipywidgets, served from a background thread so the notebook stays usable while it is open. Each click writes straight to `data/cache/wikidata/article_decisions.json` — atomically, so closing the tab loses nothing — and the notebook applies the decisions in the following cell. The geoparks get the same queue, the same page on the next port, and their own decisions file.
 
 ### Channel 5 — Wikipedia lead images
 
@@ -397,6 +415,7 @@ Run the cells top to bottom. The configuration cell holds every knob; the six `R
 | `RUN_GEOPARK_NAME_FALLBACK` | name-based resolution for the ~100 left over | one or more lookups per unresolved geopark |
 | `RUN_GEOPARK_PAGEVIEWS` | 12-month view counts for the geoparks | ~1 req/s per unique article (~4 min) |
 | `RUN_ARTICLE_CROSSCHECK` | read Wikipedia's own list pages and compare | 7 page fetches, seconds |
+| `RUN_ARTICLE_CANDIDATES` | search for better articles, and read each against the site's description | 1-2 requests per doubtful site, plus extracts in batches of 20 |
 | `RUN_WIKIPEDIA_THUMBNAILS` | lead image for the sites whose export has none | 2 requests per site, 56 sites, ~1 min |
 | `RUN_PROXY_CHECK` | one `HEAD` per main photo through the resizing proxy | 1,458 requests, 8 at a time, ~6 min, cached |
 | `RUN_LOCAL_REDUCTION` | download and shrink whatever the proxy refuses | 7 photos, ~300 MB, ~10 min |
