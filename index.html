@@ -1919,6 +1919,37 @@
             return url.replace(/^http:/i, 'https:');
         }
 
+        // UNESCO publishes originals, not web assets: the 197 geopark photos come to 362 MB
+        // between them — mean 1.9 MB, 17 over 8 MB — and neither host offers a resized
+        // variant (Azure Blob Storage ignores ?width=, the World Heritage Centre serves the
+        // file as uploaded). Every remote photo is therefore requested through a resizing
+        // proxy at the width the card actually shows, which takes the average main photo to
+        // ~100 kB. Each slide keeps its original URL and falls back to it once if the proxy
+        // fails, so a proxy outage degrades to slow photos rather than no photos.
+        const IMAGE_PROXY = 'https://wsrv.nl/';
+        // The popup is capped at 300 px, so the photo renders about 282 CSS px wide and 760
+        // is ~2.7x that — ample at devicePixelRatio 2. Quality is therefore where the bytes
+        // are worth spending: q90 costs 1.43x q82 and keeps the card looking photographic.
+        const IMAGE_PROXY_WIDTH = 760;
+        const IMAGE_PROXY_QUALITY = 90;
+
+        function proxiedImageUrl(url) {
+            // Relative paths are the seven photos too large for the proxy to ingest (over
+            // 71 megapixels), shrunk in the pipeline and served from the repo at the right
+            // size already.
+            if (!/^https?:\/\//i.test(url)) return url;
+            return `${IMAGE_PROXY}?url=${encodeURIComponent(url)}`
+                + `&w=${IMAGE_PROXY_WIDTH}&output=webp&q=${IMAGE_PROXY_QUALITY}`;
+        }
+
+        // A photo URL is either absolute, on one of UNESCO's hosts, or a repo-relative path
+        // under images/. safeExternalUrl() alone would reject the latter.
+        function safeImageUrl(value) {
+            const url = String(value || '').trim();
+            if (/^images\/(?!.*\.\.)[\w/-]+\.(?:jpe?g|png|webp)$/i.test(url)) return url;
+            return safeExternalUrl(url);
+        }
+
         function unescoUrlFromSiteId(siteId) {
             const id = String(siteId ?? '').trim();
             if (!/^\d+$/.test(id)) return '';
@@ -2188,6 +2219,20 @@
         }
 
         const popup = new maplibregl.Popup({ closeButton: true, maxWidth: '300px' });
+
+        // Even proxied, a photo is a network request in flight when the visitor clicks away.
+        // Removing the attribute (rather than setting src = '', which would re-request the
+        // page URL) runs the browser's abort path, so nothing keeps downloading for a card
+        // that is no longer on screen.
+        let livePopupImage = null;
+
+        function abortPopupImage() {
+            if (!livePopupImage) return;
+            livePopupImage.removeAttribute('src');
+            livePopupImage = null;
+        }
+
+        popup.on('close', abortPopupImage);
         // Rebound on every popup; goTo() relies on the handlers staying attached to the <img>.
         let fitPopupImage = () => { };
         let hidePopupImage = () => { };
@@ -2199,6 +2244,9 @@
 
         function showSitePopup(feature) {
             if (!feature) return;
+            // setHTML() on an open popup fires no close event, so the outgoing card's photo
+            // is cancelled here as well as on close.
+            abortPopupImage();
             const {
                 dataset, site_id, label, category, color_key, in_danger, states,
                 date_inscribed, short_description, video_url, website_url,
@@ -2228,11 +2276,12 @@
             const slides = [];
             const seen = new Set();
             const pushSlide = (url, isPrimary) => {
-                const safe = safeExternalUrl(url);
+                const safe = safeImageUrl(url);
                 if (!safe || seen.has(safe)) return;
                 seen.add(safe);
                 slides.push({
-                    url: safe,
+                    url: proxiedImageUrl(safe),
+                    original: safe,
                     credit: isPrimary ? photoCredit : null,
                     caption: isPrimary && hasDisplayValue(image_caption) ? String(image_caption).trim() : ''
                 });
@@ -2241,6 +2290,7 @@
             parseUrlList(extra_image_urls).forEach(url => pushSlide(url, false));
 
             const hasSlides = slides.length > 0;
+            let slideIndex = 0;
             const imageHtml = hasSlides ? `
                 <div class="popup-image-wrap" id="popup-image-wrap">
                     <img class="popup-species-image" id="popup-slide-img" src="${escapeHtml(slides[0].url)}" alt="${escapeHtml(siteName)}" referrerpolicy="no-referrer" loading="lazy">
@@ -2380,7 +2430,20 @@
                     syncFlipHeight();
                 };
                 img.onload = fitPopupImage;
-                img.onerror = hidePopupImage;
+                img.onerror = () => {
+                    // The proxy refuses an input over 71 megapixels and can be down like any
+                    // other host, so a failed slide is retried once against UNESCO's own URL
+                    // before the image block is collapsed.
+                    const slide = slides[slideIndex];
+                    if (slide && slide.original && !slide.triedOriginal
+                        && slide.original !== slide.url) {
+                        slide.triedOriginal = true;
+                        img.src = slide.original;
+                        return;
+                    }
+                    hidePopupImage();
+                };
+                livePopupImage = img;
                 if (img.complete && img.naturalWidth) fitPopupImage();
 
                 if (wrap) {
@@ -2393,7 +2456,6 @@
 
             // Wire up slideshow navigation
             if (slides.length > 1) {
-                let idx = 0;
                 const el = popup.getElement();
                 const img = el.querySelector('#popup-slide-img');
                 const attrSpan = el.querySelector('#popup-img-attr');
@@ -2409,21 +2471,21 @@
                 preload(-1);
 
                 const goTo = (newIdx) => {
-                    idx = (newIdx + slides.length) % slides.length;
-                    const slide = slides[idx];
+                    slideIndex = (newIdx + slides.length) % slides.length;
+                    const slide = slides[slideIndex];
                     img.src = slide.url;
                     if (caption) {
                         caption.textContent = slide.caption || '';
                         caption.hidden = !slide.caption;
                     }
                     if (attrSpan) attrSpan.textContent = slide.credit ? `Photo: ${slide.credit}` : '';
-                    if (dots) dots.textContent = slideIndicator(idx, slides.length);
-                    preload(idx + 1);
-                    preload(idx - 1);
+                    if (dots) dots.textContent = slideIndicator(slideIndex, slides.length);
+                    preload(slideIndex + 1);
+                    preload(slideIndex - 1);
                 };
 
-                el.querySelector('.popup-slide-prev').addEventListener('click', (e) => { e.stopPropagation(); goTo(idx - 1); });
-                el.querySelector('.popup-slide-next').addEventListener('click', (e) => { e.stopPropagation(); goTo(idx + 1); });
+                el.querySelector('.popup-slide-prev').addEventListener('click', (e) => { e.stopPropagation(); goTo(slideIndex - 1); });
+                el.querySelector('.popup-slide-next').addEventListener('click', (e) => { e.stopPropagation(); goTo(slideIndex + 1); });
             }
         }
 

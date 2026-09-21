@@ -14,9 +14,12 @@ compute from polygons.
 from __future__ import annotations
 
 import html
+import io
 import json
 import math
+import os
 import re
+from concurrent import futures
 import time
 import unicodedata
 import urllib.parse
@@ -997,7 +1000,171 @@ def get_pageviews(project, title, retries=4):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 5. GeoJSON export
+# 5. Photo delivery
+#
+# UNESCO publishes originals, not web assets. The 197 geopark photos alone come to
+# 362 MB — mean 1.9 MB, 17 of them over 8 MB, the largest a 41 MB stereo JPEG — and
+# neither host offers a resized variant: Azure Blob Storage ignores ?width= and the
+# World Heritage Centre serves the file as uploaded. So the globe requests every photo
+# through a resizing proxy, which is applied in index.html at render time rather than
+# baked into sites.geojson: it then covers the 25,497 gallery URLs as well without
+# adding ~1.3 MB of rewritten links to the file every visitor downloads, and each <img>
+# can fall back to the original URL on its own if the proxy ever fails.
+#
+# What the proxy cannot do is ingest an image over 71 megapixels, and seven photos
+# exceed that — two geoparks and five World Heritage properties, up to 128 megapixels.
+# Those are the only images this module downloads: they are shrunk here, committed to
+# the repo, and served directly.
+# ══════════════════════════════════════════════════════════════════════════════
+
+IMAGE_PROXY_BASE = "https://wsrv.nl/"
+# The popup is capped at 300 px, so the photo renders about 282 CSS px wide. 760 is
+# therefore ~2.7x the display width — ample even at devicePixelRatio 2 — which makes
+# quality, not width, the lever worth spending bytes on: q90 costs 1.43x q82 (62 kB ->
+# 89 kB on a 10-photo sample) and keeps the card looking like a photograph.
+IMAGE_PROXY_WIDTH = 760
+IMAGE_PROXY_QUALITY = 90
+IMAGE_PROXY_OUTPUT = "webp"
+
+# Reduction targets for the handful the proxy refuses. These are the only photos served
+# without the proxy in front of them, so they are cut once and kept generous: 1520 px is
+# over 5x the rendered width, and q92 leaves no visible JPEG artefacts on a large screen.
+LOCAL_IMAGE_MAX_EDGE = 1520
+LOCAL_IMAGE_QUALITY = 92
+
+# Pillow refuses an image over ~89 megapixels as a decompression bomb. The files here are
+# UNESCO's own published photos, not untrusted uploads, so the ceiling is lifted for them.
+LOCAL_IMAGE_PIXEL_CEILING = 400_000_000
+
+
+def write_json_atomic(path, payload):
+    """Write JSON via a temp file and one rename, so an interrupted run cannot truncate it."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=1))
+    os.replace(temporary, path)
+    return path
+
+
+def read_json_cache(path):
+    """Read a JSON cache, tolerating a file left corrupt by an earlier interrupted run."""
+    path = Path(path)
+    if not path.exists():
+        return {}
+    raw = path.read_text()
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        # "Extra data": a shorter document written over a longer one. The leading document
+        # is still valid and complete, so it is salvaged rather than thrown away.
+        try:
+            payload, _ = json.JSONDecoder().raw_decode(raw)
+        except json.JSONDecodeError:
+            print(f"  [cache] {path} is unreadable — starting fresh")
+            return {}
+        print(f"  [cache] {path} had trailing junk — salvaged {len(payload):,} entries")
+        write_json_atomic(path, payload)
+        return payload
+
+
+def proxy_image_url(url, width=None, quality=None, output=None):
+    """Wrap a photo URL in the resizing proxy — the same URL index.html builds."""
+    target = clean_str(url)
+    if not target.lower().startswith(("http://", "https://")):
+        return target
+    params = urllib.parse.urlencode({
+        "url": target,
+        "w": IMAGE_PROXY_WIDTH if width is None else width,
+        "output": IMAGE_PROXY_OUTPUT if output is None else output,
+        "q": IMAGE_PROXY_QUALITY if quality is None else quality,
+    })
+    return f"{IMAGE_PROXY_BASE}?{params}"
+
+
+def check_proxy_image(url, timeout=60):
+    """HEAD one photo through the proxy. Returns {ok, status, bytes, message}."""
+    try:
+        response = requests.head(proxy_image_url(url), timeout=timeout,
+                                 allow_redirects=True, headers=wikimedia_headers())
+    except requests.exceptions.RequestException as exc:
+        return {"ok": False, "status": 0, "bytes": 0, "message": str(exc)[:120]}
+    length = response.headers.get("Content-Length")
+    return {
+        "ok": response.status_code == 200,
+        "status": response.status_code,
+        "bytes": int(length) if (length or "").isdigit() else 0,
+        "message": "" if response.status_code == 200 else response.reason or "",
+    }
+
+
+def check_proxy_images(urls, cache_path=None, workers=8):
+    """HEAD many photos through the proxy in parallel, caching results on disk.
+
+    A failure is cached too: the pixel limit is a property of the file, not a transient
+    error, and re-checking 1,500 photos on every run is a waste. Delete the cache file to
+    force a re-check after a new export.
+    """
+    cache_path = Path(cache_path) if cache_path else None
+    results = read_json_cache(cache_path) if cache_path else {}
+    if results:
+        print(f"  [proxy] {len(results):,} cached checks from {cache_path}")
+
+    pending = [u for u in dict.fromkeys(urls) if u and u not in results]
+    if not pending:
+        return results
+
+    with futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        jobs = {pool.submit(check_proxy_image, url): url for url in pending}
+        for done in tqdm(futures.as_completed(jobs), total=len(jobs), desc="Proxy check"):
+            results[jobs[done]] = done.result()
+
+    if cache_path:
+        write_json_atomic(cache_path, results)
+    return results
+
+
+def reduce_image_locally(url, dest_path, max_edge=None, quality=None, timeout=300):
+    """Download one oversized photo and save a display-sized JPEG beside the globe.
+
+    Returns the number of bytes written, or None if the photo could not be fetched or
+    decoded. Pillow reads the first frame of a stereo JPEG (MPO), which is what a browser
+    would show anyway.
+    """
+    from PIL import Image  # imported lazily: only this function needs Pillow
+
+    max_edge = LOCAL_IMAGE_MAX_EDGE if max_edge is None else max_edge
+    quality = LOCAL_IMAGE_QUALITY if quality is None else quality
+    dest_path = Path(dest_path)
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+    previous_limit = Image.MAX_IMAGE_PIXELS
+    Image.MAX_IMAGE_PIXELS = LOCAL_IMAGE_PIXEL_CEILING
+    try:
+        response = requests.get(url, timeout=timeout, stream=True,
+                                headers=wikimedia_headers())
+        response.raise_for_status()
+        with Image.open(io.BytesIO(response.content)) as image:
+            source_size = image.size
+            image = image.convert("RGB")
+            image.thumbnail((max_edge, max_edge), Image.LANCZOS)
+            image.save(dest_path, format="JPEG", quality=quality,
+                       optimize=True, progressive=True)
+    except (requests.exceptions.RequestException, OSError, ValueError) as exc:
+        tqdm.write(f"  [reduce] {type(exc).__name__}: {exc} — {url[:90]}")
+        return None
+    finally:
+        Image.MAX_IMAGE_PIXELS = previous_limit
+
+    written = dest_path.stat().st_size
+    megapixels = source_size[0] * source_size[1] / 1_000_000
+    print(f"  [reduce] {source_size[0]}x{source_size[1]} ({megapixels:.0f} MP) "
+          f"→ {dest_path} ({written / 1024:.0f} kB)")
+    return written
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 6. GeoJSON export
 # ══════════════════════════════════════════════════════════════════════════════
 
 # Properties written to sites.geojson. Anything else stays in the notebook's DataFrame.

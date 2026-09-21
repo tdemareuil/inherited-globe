@@ -17,7 +17,8 @@ Where the endangered globe maps what we are about to lose, this one maps what wa
   - [Step 1 — Parsing & label points](#step-1--parsing--label-points)
   - [Step 2 — Popularity harvesting](#step-2--popularity-harvesting)
   - [Step 3 — The geoparks](#step-3--the-geoparks)
-  - [Step 4 — Clean GeoJSON export](#step-4--clean-geojson-export)
+  - [Step 4 — Photo delivery](#step-4--photo-delivery)
+  - [Step 5 — Clean GeoJSON export](#step-5--clean-geojson-export)
 - [Running the pipeline](#running-the-pipeline)
 - [Web Interface](#web-interface)
 - [Differences from the endangered globe](#differences-from-the-endangered-globe)
@@ -102,7 +103,8 @@ Notable properties of the source data:
 - **Coordinates.** All 241 rows carry a `Coordonnées` field, so there is no clustering, no centroid and no manual placement to do for this channel — the whole spatial machinery of Channel 1 is bypassed.
 - **Region.** There is no region column, but `Internal ID` is prefixed with the programme region (`EUFR10`, `ASCN01`, `NACA03`). Those prefixes map onto the same five UNESCO regions the World Heritage export uses, with Canada (`NA`) and New Zealand (`OC`) folded into their neighbouring region exactly as the World Heritage List does, so one region filter serves both datasets.
 - **Countries.** `Pays` gives ISO 3166-1 alpha-2 codes only (`AT,SI`), where the World Heritage export ships written names too, so the pipeline carries a code → name table for the 51 countries involved.
-- **Photos.** 197 of the 241 rows have a `Main Image`; there is no gallery, no author, no copyright and no caption, so a geopark popup shows one photo with no credit line and no caption overlay. 161 of those URLs are pre-resized (`<InternalID>_main.jpg`, 30–70 kB); the other 36 are raw uploads, up to 13 MB. They are served from Azure blob storage and hotlink cleanly — unlike the World Heritage photos, a scripted `HEAD` returns 200 — but the heavy ones are worth knowing about: a popup opening one pulls the full-resolution file.
+- **Photos.** 197 of the 241 rows have a `Main Image`; there is no gallery, no author, no copyright and no caption, so a geopark popup shows one photo with no credit line and no caption overlay. They are served from Azure blob storage and hotlink cleanly — unlike the World Heritage photos, a scripted `HEAD` returns 200.
+- **Photo sizes.** These are photographs, not web assets: the 197 main photos come to **362 MB between them**, mean 1.9 MB. 161 are pre-resized (`<InternalID>_main.jpg`, 30–70 kB) and the other 36 are raw uploads — 17 of them over 8 MB, the largest a 41 MB, 88-megapixel stereo JPEG (`image/mpo`) of the Salma geopark crater. Azure Blob Storage has no transform layer, so `?width=800`, `?w=` and `?imwidth=` all return the full 43,204,608 bytes unchanged. [Step 4](#step-4--photo-delivery) is how the globe deals with it.
 - **Names.** Every single name ends in `UNESCO Global Geopark`. The full `Titre EN` stays as the popup title and as what the search box matches; the globe label drops the suffix, otherwise 241 labels would share a 23-character tail.
 - **Encoding.** UTF-8 with BOM, and the introductions contain numeric HTML entities (`&#160;`) as well as the inline tags the World Heritage export has. Both are handled in the pipeline.
 - **Glued sentences.** `Introduction EN` is two paragraphs concatenated, and the space at the join is lost: *…the Japanese archipelago.At the Date Museum…*. 226 of the 241 introductions are affected (and one World Heritage description), so the pipeline puts the space back wherever a stop sits between a lowercase letter and a capital — a guard that leaves initialisms, decimals and ellipses alone.
@@ -171,14 +173,14 @@ For each property:
 
 Every external call is cached on disk under `data/cache/` (git-ignored), keyed by article or site, so an interrupted run resumes instead of restarting. Checkpoints after parsing, after Wikidata and after pageviews let any stage be re-entered independently.
 
-Image sources, in slide order — all from the export, none fetched online:
+Image sources, in slide order — all from the export, none fetched from Wikimedia:
 
 1. UNESCO `Main Image` for the property, with its author, copyright and caption
 2. Every remaining photo in its UNESCO `Images` gallery
 
 Descriptions are exported in full (`DESCRIPTION_MAX_CHARS = None`), averaging 585 characters and running to 1,943 for the longest, because the popup gives them a face of their own rather than a few lines under the facts.
 
-> **On hotlinking.** UNESCO serves its photos from `whc.unesco.org/document/<id>` behind a bot challenge: scripted requests get a 403, so the notebook cannot verify them, but they load normally in a browser — verified in the globe. The popup still sends `referrerpolicy="no-referrer"` and collapses the whole image block if a photo fails, so the card degrades to text rather than showing a grey box.
+> **On hotlinking.** UNESCO serves its World Heritage photos from `whc.unesco.org/document/<id>` behind a bot challenge: scripted requests get a 403 — even with a browser user-agent — so the notebook cannot verify them directly, but they load normally in a browser, and the resizing proxy fetches them without trouble. The geopark photos, on Azure blob storage, hotlink cleanly either way. The popup sends `referrerpolicy="no-referrer"`, retries a failed slide once against its original URL, and collapses the whole image block if that fails too, so the card degrades to text rather than showing a grey box.
 
 ### Step 3 — The geoparks
 
@@ -194,7 +196,39 @@ Section 6 of the notebook runs the same shape of pipeline over `data/eg0001.csv`
 
 All 241 geoparks are placed: 121 in Europe and North America, 99 in Asia and the Pacific, 16 in Latin America and the Caribbean, 3 in Africa, 2 in the Arab States.
 
-### Step 4 — Clean GeoJSON export
+### Step 4 — Photo delivery
+
+Both exports publish originals, and between them that is far more than a popup needs. `index.html` therefore requests every photo through a **resizing proxy** ([wsrv.nl](https://wsrv.nl)) at the 760 px the card actually shows:
+
+```
+https://wsrv.nl/?url=<encoded original>&w=760&output=webp&q=82
+```
+
+The proxy fetches `whc.unesco.org` successfully where a scripted request gets a 403, so one rewrite covers both datasets. Across **all 1,458 main photos** it serves 1,451 of them at a mean of ~100 kB. For the geoparks, where the originals can be measured, that is **362 MB → about 17 MB**.
+
+The popup is capped at 300 px, so the photo renders about 282 CSS px wide and `w=760` is already ~2.7× that — ample at `devicePixelRatio` 2. Width is therefore not where the bytes are worth spending; quality is. `q=90` costs 1.43× `q=82` (62 kB → 89 kB on a 10-photo sample) and keeps the card looking like a photograph rather than a thumbnail.
+
+**The rewrite lives in the browser, not in `sites.geojson`.** Two reasons: it then covers the 25,497 gallery URLs for free, where baking them in would add roughly 1.3 MB of rewritten links to the file every visitor downloads before seeing anything; and each `<img>` keeps its original URL, so a slide that fails is retried once against UNESCO's own host before the image block collapses. A proxy outage degrades to slow photos rather than no photos.
+
+**What the proxy cannot do is ingest an image over 71 megapixels**, and seven photos exceed it — two geoparks and five World Heritage properties. The pipeline finds them by sending one `HEAD` per main photo through the proxy (1,458 requests, 8 at a time, ~6 min, cached in `data/cache/`), then downloads and shrinks exactly those with Pillow. These are the only photos served without the proxy in front of them, so they are cut once and kept generous: 1520 px on the long edge, JPEG **q92**, over 5× the rendered width.
+
+| Site | Original | Reduced |
+|---|---|---|
+| `1585` Trans-Iranian Railway | 23754×15650, **372 MP** | 1520×1001, 680 kB |
+| `1770` Alamūt Castle | 11811×8858, 105 MP | 1520×1140, 550 kB |
+| `1472` Rock Art in the Hail Region | 11811×8858, 105 MP | 1520×1140, 531 kB |
+| `1501` Antequera Dolmens Site | 10630×7087, 75 MP | 1520×1013, 362 kB |
+| `1666` Gaya Tumuli | 13592×7152, 97 MP | 1520×800, 357 kB |
+| `ARSA02` Salma geopark | 14400×6086, 88 MP, 41 MB | 1520×642, 224 kB |
+| `ASCN50` Changshan geopark | 14985×8541, 128 MP, 36 MB | 1520×866, 219 kB |
+
+2.85 MB for the seven, committed under `images/`, and those rows' `image_url` becomes a repo-relative path; the browser leaves relative paths unproxied, since they are already the right size. **These seven are the only images the pipeline ever downloads** — everything else on the globe is still a URL taken straight from an export.
+
+Both caches in this section are written atomically (temp file, then one rename) and read back tolerantly, because an interrupted run would otherwise leave a shorter document written over a longer one and the next run would fail on the trailing bytes.
+
+Only *main* photos are checked. Checking all 25,497 gallery URLs would take around half an hour of proxy transcodes, and an oversized gallery slide simply falls back to its original: slow for that one slide, never broken.
+
+### Step 5 — Clean GeoJSON export
 
 The notebook produces `sites.geojson`, a list of GeoJSON Point features (~3 MB for both lists: 1,273 properties + 241 geoparks). A `dataset` field says which export each feature came from. A property appears more than once only when `MAX_LABEL_POINTS_PER_SITE > 1` and its components form several large clusters:
 
@@ -305,8 +339,10 @@ Run the cells top to bottom. The configuration cell holds every knob; the six `R
 | `RUN_GEOPARK_DESIGNATION` | designated-item name match for the geoparks | one SPARQL query + one sitelink batch, <1 min |
 | `RUN_GEOPARK_NAME_FALLBACK` | name-based resolution for the ~100 left over | one or more lookups per unresolved geopark |
 | `RUN_GEOPARK_PAGEVIEWS` | 12-month view counts for the geoparks | ~1 req/s per unique article (~4 min) |
+| `RUN_PROXY_CHECK` | one `HEAD` per main photo through the resizing proxy | 1,458 requests, 8 at a time, ~6 min, cached |
+| `RUN_LOCAL_REDUCTION` | download and shrink whatever the proxy refuses | 7 photos, ~300 MB, ~10 min |
 
-None of them fetch images.
+Only the last one fetches an image, and only the seven the proxy cannot ingest.
 
 A full cold run takes roughly 30–50 minutes. Re-runs are near-instant: everything is cached under `data/cache/`.
 
@@ -372,6 +408,8 @@ The source row is `UNESCO | Wikipedia | Wikidata` — records, not image files. 
 
 Galleries run from 1 to 58 photos (145 in the raw export for one property), so the slideshow shows a `3 / 58` counter rather than a row of dots past twelve slides, and preloads only the neighbouring photo instead of the whole gallery.
 
+Every remote photo is requested through the resizing proxy described in [Step 4](#step-4--photo-delivery), and **an in-flight photo is cancelled when the card closes or is replaced** — `removeAttribute('src')`, which runs the browser's abort path, rather than `src = ''`, which would re-request the page URL. Clicking through a dozen sites therefore leaves nothing downloading behind you.
+
 **Locate me.** A crosshair button in the bottom-right control stack flies the globe to the visitor's approximate location. It resolves the position from the visitor's **IP address**, not the browser Geolocation API — deliberately, so a single click works with no permission prompt. The trade-off is accuracy: IP geolocation is city-level at best, providers routinely disagree by a few hundred kilometres, and VPN users land at their exit node. The landing zoom is therefore regional (5) rather than city-level.
 
 Two providers are queried in order — [ipwho.is](https://ipwho.is/), then [geojs.io](https://get.geojs.io/) — each with a 6 s timeout, since privacy extensions such as uBlock Origin block these endpoints outright. The result is cached for the session. The lookup fires **on click only**, never on page load, so no visitor is geolocated merely for opening the map.
@@ -392,7 +430,7 @@ Everything that made the sister project work is kept — starfield, de-overlap, 
 | Second filter | Animal group | UNESCO region |
 | Third filter | — | World Heritage in Danger toggle |
 | Search fields | Common + scientific name | Site name + states parties |
-| Images | Wikipedia / Wikidata / Commons / iNaturalist, fetched per taxon | UNESCO photo gallery, straight from the export, never fetched |
+| Images | Wikipedia / Wikidata / Commons / iNaturalist, fetched per taxon | UNESCO photo gallery, straight from the export, resized in flight by a proxy |
 | Wikidata key | `P627` (IUCN taxon ID) | `P757` (World Heritage Site ID); no identifier at all for geoparks, so they resolve by name against the designated items |
 | Heavy dependencies | geopandas, shapely, IUCN API token, ~70 GB of shapefiles | pandas + requests |
 | Data source | 5 APIs + local spatial downloads | 2 committed CSVs + 3 public APIs |
