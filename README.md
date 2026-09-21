@@ -13,6 +13,7 @@ Where the endangered globe maps what we are about to lose, this one maps what wa
   - [Channel 2 — UNESCO Global Geoparks export](#channel-2--unesco-global-geoparks-export)
   - [Channel 3 — Wikidata (SPARQL API)](#channel-3--wikidata-sparql-api)
   - [Channel 4 — Wikipedia Pageviews (public REST API)](#channel-4--wikipedia-pageviews-public-rest-api)
+  - [Channel 5 — Wikipedia lead images](#channel-5--wikipedia-lead-images)
 - [Python Pipeline](#python-pipeline)
   - [Step 1 — Parsing & label points](#step-1--parsing--label-points)
   - [Step 2 — Popularity harvesting](#step-2--popularity-harvesting)
@@ -62,20 +63,20 @@ Because the two are independent, so are the controls. The pipeline exports both:
 
 ## Data Architecture
 
-The project combines UNESCO and Wikimedia data through four technical channels in Python:
+The project combines UNESCO and Wikimedia data through five technical channels in Python:
 
 ```
 [ UNESCO WHC export ]  [ UNESCO geoparks ]      [ Wikidata ]         [ Wikipedia API ]
-      (.CSV)                 (.CSV)             (SPARQL query)       (REST Pageviews)
-         │                     │                      │                     │
- 1. Names, category,   2. Names, year,         3. Record → Article    4. Traffic volume
-    danger, region,       country, area,          title mapping          over 12 months
-    coordinates,          coordinates,
+      (.CSV)                 (.CSV)             (SPARQL query)       (REST + action)
+         │                     │                      │                   │      │
+ 1. Names, category,   2. Names, year,         3. Record → Article  4. Traffic  5. Lead
+    danger, region,       country, area,          title mapping        volume,     image,
+    coordinates,          coordinates,                                 12 months   56 gaps
     ALL photos            ONE photo,
                           video + website
 ```
 
-Only channels 1–2 are mandatory: they already contain coordinates, categories and every photo the globe shows. Channels 3–4 exist purely to size the labels — **no image is ever fetched from Wikimedia.**
+Only channels 1–2 are mandatory: they already contain coordinates, categories and all but 56 of the photos the globe shows. Channels 3–4 exist purely to size the labels, and channel 5 covers the 56 sites whose export has no photo, falling back to their Wikipedia lead image.
 
 ### Channel 1 — UNESCO World Heritage List export
 
@@ -111,7 +112,7 @@ Notable properties of the source data:
 
 ### Channel 3 — Wikidata (SPARQL API)
 
-What we take: the Wikipedia article behind each property, and nothing else. Wikidata stores the UNESCO site ID as property [`P757`](https://www.wikidata.org/wiki/Property:P757), so one batched SPARQL query maps most of the List to a Wikidata item and its Wikipedia sitelinks. This is the exact counterpart of the `P627` (IUCN taxon ID) lookup in the sister project — except that the `P18` image is deliberately **not** requested, since photos come from the export.
+What we take: the Wikipedia article behind each property, and nothing else. Wikidata stores the UNESCO site ID as property [`P757`](https://www.wikidata.org/wiki/Property:P757), so one batched SPARQL query maps most of the List to a Wikidata item and its Wikipedia sitelinks. This is the exact counterpart of the `P627` (IUCN taxon ID) lookup in the sister project — except that the `P18` image is not requested, since photos come from the export.
 
 Wikipedia language priority is English, German, French, Spanish, Italian, Russian, Japanese, Chinese, Portuguese, Dutch, then a further 20 languages, then any remaining Wikipedia sitelink returned by Wikidata. The list is wider than the endangered globe's because the World Heritage List is globally distributed by construction.
 
@@ -150,6 +151,18 @@ Save the file however api.wikimedia.org gives it to you. The portal hands you a 
 
 The pageviews endpoint is IP-limited and does not honour the token, so that stage stays paced at roughly one request per second either way.
 
+### Channel 5 — Wikipedia lead images
+
+What we take: a photograph for the sites that have none. 56 sites have an empty image column — 12 World Heritage properties (Lorentz National Park, Serra da Capivara and the Great Living Chola Temples among them) and 44 geoparks — and they fall back to the lead image of their Wikipedia article: `action=query&prop=pageimages` at `pithumbsize=760`, the same width the popup asks the proxy for.
+
+A second call reads the Commons file's description page (`prop=imageinfo&iiprop=extmetadata`) for the credit: `Artist` becomes `image_author`, `LicenseShortName` becomes `image_copyright`, and `ObjectName` becomes `image_caption` when it is short enough to read as one. The popup renders them through the same credit line as an UNESCO photo.
+
+Two requests per site, ~112 in total, cached in `data/cache/images/wikipedia_thumbnails.json`. An article with no lead image is cached as an empty record so it is not asked twice; a site with no article is never asked. Anything still uncovered keeps an imageless popup.
+
+`image_source` records where a photo came from, `UNESCO` or `Wikipedia`.
+
+This channel needs Channel 3 — without a resolved article there is nothing to fall back to — so it runs after the two datasets are combined, at section 7.1 of the notebook.
+
 ---
 
 ## Python Pipeline
@@ -178,15 +191,16 @@ For each property:
 1. Resolve a Wikipedia article via the fallback chain described in Channel 3 above.
 2. Query the Wikimedia Pageviews API for the 12-month view count.
 3. Take `Main Image` as the primary photo and **every** URL in the `Images` gallery as further popup slides. `MAX_EXTRA_IMAGES = None` keeps them all; set it to an integer to cap the slideshow and shrink the exported file.
-4. Carry `Main Image Author`, `Main Image Copyright` and `Main Image Caption EN` through as `image_author`, `image_copyright` and `image_caption`. All three describe the main photo only — the export publishes no per-photo metadata for the gallery — so they are cleared for the 12 properties with no main photo.
+4. Carry `Main Image Author`, `Main Image Copyright` and `Main Image Caption EN` through as `image_author`, `image_copyright` and `image_caption`. All three describe the main photo only — the export publishes no per-photo metadata for the gallery — so they are cleared for the 12 properties with no main photo, which Step 4 then fills from Wikipedia with that photo's own credit.
 5. Store `image_url`, `extra_image_urls`, `image_count` and the popularity score.
 
 Every external call is cached on disk under `data/cache/` (git-ignored), keyed by article or site, so an interrupted run resumes instead of restarting. Checkpoints after parsing, after Wikidata and after pageviews let any stage be re-entered independently.
 
-Image sources, in slide order — all from the export, none fetched from Wikimedia:
+Image sources, in slide order:
 
 1. UNESCO `Main Image` for the property, with its author, copyright and caption
 2. Every remaining photo in its UNESCO `Images` gallery
+3. Where the export has neither: the lead image of the Wikipedia article, with its Commons credit (Channel 5)
 
 Descriptions are exported in full (`DESCRIPTION_MAX_CHARS = None`), averaging 585 characters and running to 1,943 for the longest, because the popup gives them a face of their own rather than a few lines under the facts.
 
@@ -200,15 +214,17 @@ Section 6 of the notebook runs the same shape of pipeline over `data/eg0001.csv`
 - Key each geopark by its `Internal ID`. World Heritage properties are numbered, so `site_id` is a string for geoparks and an integer for properties; the browser treats it as an opaque key, and only falls back to building a `whc.unesco.org/en/list/<id>` URL from it when it is all digits.
 - Set `category` and `color_key` to `Geopark`, `in_danger` to false, and `point_source` to `geopark_coordinates`. One published coordinate means exactly one label point each.
 - Derive the globe label by dropping the `UNESCO Global Geopark` suffix and then shortening as usual; the longest that survives is 37 characters.
-- Take `Main Image` as the only photo, and leave `image_author`, `image_copyright`, `image_caption` and `extra_image_urls` empty — the export has no such columns.
+- Take `Main Image` as the only photo. It is the export's only image column — one URL per cell, no gallery column, and no URL hiding in the text fields — so a geopark gets at most one photo, against a mean of 20 for a World Heritage property. `image_author`, `image_copyright`, `image_caption` and `extra_image_urls` are left empty, because the export has no such columns. The 44 geoparks with no photo fall back to Wikipedia in Step 4, and those do arrive with a credit.
 - Carry `Video` and `Site Internet` through as `video_url` and `website_url`.
 - Resolve articles and pageviews exactly as above, then concatenate onto the World Heritage frame. De-duplication of coordinates runs across **both** datasets, so a geopark sitting on the same point as a World Heritage property is nudged apart rather than hidden behind it.
 
 All 241 geoparks are placed: 121 in Europe and North America, 99 in Asia and the Pacific, 16 in Latin America and the Caribbean, 3 in Africa, 2 in the Arab States.
 
-### Step 4 — Photo delivery
+### Step 4 — Photos: gaps, then delivery
 
-Both exports publish originals, and between them that is far more than a popup needs. `index.html` therefore requests every photo through a **resizing proxy** ([wsrv.nl](https://wsrv.nl)) at the 760 px the card actually shows:
+**Filling the gaps.** The 56 sites with no photo in either export are covered first, from Wikipedia, as Channel 5 describes: the article's lead image at 760 px, with its Commons author and licence as the credit line. Everything below applies to those and to UNESCO's own photos alike.
+
+**Delivering them.** Both exports publish originals, and between them that is far more than a popup needs. `index.html` therefore requests every photo through a **resizing proxy** ([wsrv.nl](https://wsrv.nl)) at the 760 px the card actually shows:
 
 ```
 https://wsrv.nl/?url=<encoded original>&w=760&output=webp&q=82
@@ -286,7 +302,7 @@ The notebook produces `sites.geojson`, a list of GeoJSON Point features (~3 MB f
 
 `short_label` is present only when the official name is too long for the globe; fields with no value (`area_hectares` when the export reports 0, `wiki_title` when no article resolved) are omitted rather than exported as null.
 
-A geopark feature is the same shape with fewer fields — no `criteria`, no `component_count`, no photo metadata, no gallery — plus the two links only it has:
+A geopark feature is the same shape with fewer fields — no `criteria`, no `component_count`, no gallery, and no photo metadata unless its photo was borrowed from Wikipedia — plus the two links only it has:
 
 ```json
 {
@@ -351,10 +367,11 @@ Run the cells top to bottom. The configuration cell holds every knob; the six `R
 | `RUN_GEOPARK_DESIGNATION` | designated-item name match for the geoparks | one SPARQL query + one sitelink batch, <1 min |
 | `RUN_GEOPARK_NAME_FALLBACK` | name-based resolution for the ~100 left over | one or more lookups per unresolved geopark |
 | `RUN_GEOPARK_PAGEVIEWS` | 12-month view counts for the geoparks | ~1 req/s per unique article (~4 min) |
+| `RUN_WIKIPEDIA_THUMBNAILS` | lead image for the sites whose export has none | 2 requests per site, 56 sites, ~1 min |
 | `RUN_PROXY_CHECK` | one `HEAD` per main photo through the resizing proxy | 1,458 requests, 8 at a time, ~6 min, cached |
 | `RUN_LOCAL_REDUCTION` | download and shrink whatever the proxy refuses | 7 photos, ~300 MB, ~10 min |
 
-Only the last one fetches an image, and only the seven the proxy cannot ingest.
+`RUN_LOCAL_REDUCTION` is the only one that downloads image bytes, for the seven photos the proxy cannot ingest; `RUN_WIKIPEDIA_THUMBNAILS` collects URLs and credits, and the browser loads those photos like any other.
 
 A full cold run takes roughly 30–50 minutes. Re-runs are near-instant: everything is cached under `data/cache/`.
 
@@ -442,7 +459,7 @@ Everything that made the sister project work is kept — starfield, de-overlap, 
 | Second filter | Animal group | UNESCO region |
 | Third filter | — | World Heritage in Danger toggle |
 | Search fields | Common + scientific name | Site name + states parties |
-| Images | Wikipedia / Wikidata / Commons / iNaturalist, fetched per taxon | UNESCO photo gallery, straight from the export, resized in flight by a proxy |
+| Images | Wikipedia / Wikidata / Commons / iNaturalist, fetched per taxon | UNESCO photo gallery, straight from the export, resized in flight by a proxy, with a Wikipedia lead image where the export has none |
 | Wikidata key | `P627` (IUCN taxon ID) | `P757` (World Heritage Site ID); no identifier at all for geoparks, so they resolve by name against the designated items |
 | Heavy dependencies | geopandas, shapely, IUCN API token, ~70 GB of shapefiles | pandas + requests |
 | Data source | 5 APIs + local spatial downloads | 2 committed CSVs + 3 public APIs |

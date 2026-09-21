@@ -1071,6 +1071,114 @@ def fetch_pageviews(articles, counts, cache_path, desc="Pageviews"):
 # the repo, and served directly.
 # ══════════════════════════════════════════════════════════════════════════════
 
+# ── Gap-filling: the lead photo of the Wikipedia article ──────────────────────
+# The exports leave 56 sites with no photo at all (12 World Heritage properties, 44
+# geoparks). For those, and only those, the globe borrows the lead photo of the site's
+# Wikipedia article. It is the one place the pipeline takes an image from Wikimedia,
+# and it needs two calls: `pageimages` for the thumbnail, then `imageinfo` on the file
+# it names, because a Commons photo has to carry its author and licence.
+
+WIKIPEDIA_THUMBNAIL_WIDTH = 760   # the width the popup asks the proxy for anyway
+
+
+def _wikipedia_api(project, params, retries=3, label="wikipedia"):
+    """GET the MediaWiki action API of one project, retrying on 429 and network errors."""
+    url = f"https://{project}/w/api.php"
+    for attempt in range(retries):
+        try:
+            response = requests.get(url, params={**params, "format": "json"},
+                                    headers=wikimedia_headers(), timeout=20)
+            if response.status_code == 429:
+                wait = wikimedia_retry_after(response, default=2 ** attempt * 3)
+                tqdm.write(f"  [{label}] 429 — waiting {wait}s")
+                time.sleep(wait)
+                continue
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as exc:
+            if attempt == retries - 1:
+                tqdm.write(f"  [{label}] {exc}")
+                return None
+            time.sleep(2 ** attempt * 2)
+    return None
+
+
+def wikipedia_thumbnail(project, title, width=None, retries=3):
+    """Return the article's lead photo and its credit, or None if it has no image.
+
+    The credit comes from the Commons file description: `Artist` and `LicenseShortName`
+    become the popup's credit line, `ObjectName` its caption when it is short enough to
+    read as one.
+    """
+    title = clean_str(title)
+    if not title:
+        return None
+    project = project or "en.wikipedia.org"
+    width = width or WIKIPEDIA_THUMBNAIL_WIDTH
+
+    payload = _wikipedia_api(project, {
+        "action": "query", "titles": title, "redirects": 1,
+        "prop": "pageimages", "piprop": "thumbnail|name", "pithumbsize": width,
+    }, retries=retries, label="thumbnail")
+    pages = ((payload or {}).get("query") or {}).get("pages") or {}
+    page = next((p for key, p in pages.items() if key != "-1"), None)
+    thumbnail = (page or {}).get("thumbnail") or {}
+    if not thumbnail.get("source"):
+        return None
+
+    record = {
+        # The API appends utm_* tracking parameters; they would only defeat caching.
+        "image_url": thumbnail["source"].split("?", 1)[0],
+        "image_width": thumbnail.get("width"),
+        "image_author": None,
+        "image_copyright": None,
+        "image_caption": None,
+        "image_source": "Wikipedia",
+        "image_file": page.get("pageimage"),
+        "image_article": page.get("title", title),
+    }
+
+    # Second call: the licence block on the file itself.
+    if record["image_file"]:
+        payload = _wikipedia_api(project, {
+            "action": "query", "titles": f"File:{record['image_file']}",
+            "prop": "imageinfo", "iiprop": "extmetadata",
+            "iiextmetadatafilter": "Artist|LicenseShortName|ObjectName",
+        }, retries=retries, label="thumbnail credit")
+        pages = ((payload or {}).get("query") or {}).get("pages") or {}
+        info = next((p.get("imageinfo") for p in pages.values() if p.get("imageinfo")), None)
+        meta = (info[0].get("extmetadata") if info else None) or {}
+
+        def field(name):
+            return strip_tags((meta.get(name) or {}).get("value", ""))
+
+        record["image_author"] = field("Artist") or None
+        record["image_copyright"] = field("LicenseShortName") or None
+        caption = field("ObjectName")
+        record["image_caption"] = caption if 0 < len(caption) <= 120 else None
+    return record
+
+
+def fetch_wikipedia_thumbnails(sites, cache_path=None, width=None):
+    """Look up a lead photo for each (key, project, title), caching by key.
+
+    A site whose article has no image is cached as an empty record, so a re-run does
+    not ask again. Returns the full cache, keyed by site id.
+    """
+    thumbnails = read_json_cache(cache_path) if cache_path else {}
+    pending = [(str(key), project, title) for key, project, title in sites
+               if str(key) not in thumbnails]
+    print(f"looking up {len(pending):,} article lead photos")
+    for index, (key, project, title) in enumerate(tqdm(pending, desc="Thumbnails"), start=1):
+        thumbnails[key] = wikipedia_thumbnail(project, title, width=width) or {}
+        time.sleep(SLEEP_WIKI)
+        if cache_path and index % 25 == 0:
+            write_json_atomic(cache_path, thumbnails)
+    if cache_path and pending:
+        write_json_atomic(cache_path, thumbnails)
+    return thumbnails
+
+
 IMAGE_PROXY_BASE = "https://wsrv.nl/"
 # The popup is capped at 300 px, so the photo renders about 282 CSS px wide. 760 is
 # therefore ~2.7x the display width — ample even at devicePixelRatio 2 — which makes

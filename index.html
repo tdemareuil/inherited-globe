@@ -1188,7 +1188,9 @@
                                 Wikipedia pageviews (human traffic only) over the last completed year. More-viewed
                                 sites appear earlier; zooming in reveals less-viewed ones. Photos come from the
                                 UNESCO photo gallery published with each property record &mdash; a whole gallery
-                                for a World Heritage property, a single photo for a geopark.
+                                for a World Heritage property, a single photo for a geopark. Where a record has no
+                                photo, the site's Wikipedia lead image is used instead, credited to its author
+                                and licence.
                             </p>
 
                             <span class="data-credit">
@@ -1200,7 +1202,10 @@
                                 <a href="https://data.unesco.org/explore/assets/eg0001/export/" target="_blank"
                                     rel="noopener noreferrer">Global Geoparks export</a>,
                                 downloaded 17 September 2026. Photos &copy; their respective authors, as
-                                credited in each popup.
+                                credited in each popup; the borrowed ones from
+                                <a href="https://commons.wikimedia.org/" target="_blank"
+                                    rel="noopener noreferrer">Wikimedia Commons</a>, under the licence shown
+                                with each.
                             </span>
                         </div>
                     </div>
@@ -2268,10 +2273,13 @@
             const popularityNumber = Number(popularity);
             const formattedPopularity = Number.isFinite(popularityNumber) ? popularityNumber.toLocaleString() : 'n/a';
 
-            // Every photo comes from the property's own UNESCO record: the main image,
+            // Almost every photo comes from the property's own UNESCO record: the main image,
             // then its whole gallery. A gallery can run to 145 photos, so slides are
             // built cheaply and only the neighbours of the current one are preloaded.
             // Author / copyright / caption describe the main photo; gallery photos have none.
+            // Where the record has no photo, the main image is the Wikipedia article's lead
+            // image (image_source === 'Wikipedia') and those same three fields carry its
+            // Commons author, licence and title.
             const photoCredit = formatPhotoCredit(image_author, image_copyright);
             const slides = [];
             const seen = new Set();
