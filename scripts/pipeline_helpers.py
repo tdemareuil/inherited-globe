@@ -1243,8 +1243,104 @@ def search_name(label, max_chars=60):
     return short_label(label, max_chars) or clean_str(label)
 
 
+QUEUE_CANDIDATE_CAP = 6   # candidates kept per site in the queue
+
+
+def resolve_redirects(pairs, batch_size=50):
+    """(lang, title) -> the title MediaWiki lands on once redirects are followed.
+
+    The index writes each site's official name as a link, and that is very often a
+    redirect to an article the API already found: `Changdeokgung Palace Complex` is
+    `Changdeokgung`. Compared as written the two look like a disagreement, and adopting
+    the redirect would be worse than a no-op, since pageviews are counted per requested
+    title and a redirect only gets the readers who arrive through it. A page that does
+    not exist maps to None; a title absent from the result could not be checked.
+    """
+    by_language, resolved = {}, {}
+    for lang, title in dict.fromkeys(pairs):
+        by_language.setdefault(lang, []).append(title)
+    for lang, titles in by_language.items():
+        for start in tqdm(range(0, len(titles), batch_size), desc=f"Redirects {lang}"):
+            chunk = titles[start:start + batch_size]
+            payload = _wikipedia_api(f"{lang}.wikipedia.org", {
+                "action": "query", "redirects": 1, "titles": "|".join(chunk),
+            }, label="redirects")
+            query = (payload or {}).get("query")
+            if query is None:
+                continue
+            normalized = {n["from"]: n["to"] for n in query.get("normalized", [])}
+            hops = {r["from"]: r["to"] for r in query.get("redirects", [])}
+            missing = {page["title"] for page in (query.get("pages") or {}).values()
+                       if "missing" in page}
+            for title in chunk:
+                target = normalized.get(title, title)
+                for _ in range(5):                      # a redirect can point at a redirect
+                    if target not in hops:
+                        break
+                    target = hops[target]
+                resolved[(lang, title)] = None if target in missing else target
+            time.sleep(SLEEP_WIKI)
+    return resolved
+
+
+def _listed_titles(reference):
+    """Every article the index links for one row, in the order it links them."""
+    return reference.get("titles") or ([reference["title"]] if reference.get("title") else [])
+
+
+def _canonical_titles(reference, redirects):
+    """The row's articles after redirects, de-duplicated; a title not checked stays as written."""
+    titles = []
+    for title in _listed_titles(reference):
+        target = redirects.get(("en", title), title)
+        if target and _title_key(target) not in {_title_key(t) for t in titles}:
+            titles.append(target)
+    return titles
+
+
+def _agrees(titles, current):
+    """True when the pick is an English article the index itself lists for the row."""
+    return current.get("wiki_language") == "en" and any(
+        _title_key(t) == _title_key(current.get("wiki_title")) for t in titles)
+
+
+def _auto_adoption(candidates, disputed, current_language):
+    """The candidate to adopt without review, or None. `candidates` is best-score first.
+
+    Two rules, either of which settles a site:
+
+    - **sole listed winner.** Wikipedia's index links exactly one article for the row,
+      and that article scores strictly higher than everything else on offer, the API's
+      own pick included. This is the plain disagreement — the same subject under two
+      titles — rather than a real ambiguity. A row linking several articles never
+      qualifies, since the index itself has not decided between them.
+    - **language upgrade.** A pick that is not in English, whose best candidate all but
+      matches the site name in a better-ranked language.
+    """
+    best = candidates[0]
+    runner_up = candidates[1]["score"] if len(candidates) > 1 else -1.0
+
+    listed = [c for c in candidates if c["wiki_lookup_source"] == "wikipedia_list"]
+    if (len(listed) == 1 and best is listed[0]
+            and best["score"] >= CANDIDATE_MIN_SCORE and best["score"] > runner_up):
+        return {**best, "reason": "sole_listed"}
+
+    if (not disputed and best["score"] >= CANDIDATE_SURE_SCORE
+            and best["wiki_rank"] < article_rank(current_language)):
+        return {**best, "reason": "language_upgrade"}
+    return None
+
+
+def _adopted_entry(chosen, wikidata_url):
+    """A mapping entry from a candidate, without the review-only keys."""
+    entry = {k: v for k, v in chosen.items()
+             if k not in ("score", "text_score", "current", "reason")}
+    entry["wikidata_url"] = wikidata_url
+    return entry
+
+
 def build_review_queue(frame, mapping, listed=None, id_col="site_id", name_of=None,
-                       languages=CANDIDATE_LANGUAGES, adopt_sure=True):
+                       languages=CANDIDATE_LANGUAGES, adopt_sure=True, redirects=None):
     """Sites whose article is missing or in a less-preferred language, with candidates.
 
     Returns (queue, adopted). A candidate whose title all but matches the site name in
@@ -1259,18 +1355,31 @@ def build_review_queue(frame, mapping, listed=None, id_col="site_id", name_of=No
     queue, adopted = [], []
 
     records = frame.drop_duplicates(id_col).to_dict("records")
+
+    def reference_of(record):
+        return listed.get(record[id_col]) or listed.get(str(record[id_col])) or {}
+
+    # Resolve the index's titles first. Only rows where the pick and the index differ
+    # as written need it — about one request per fifty of them.
+    if redirects is None:
+        wanted = [("en", title) for record in records
+                  for title in _listed_titles(reference_of(record))
+                  if not _agrees(_listed_titles(reference_of(record)),
+                                 mapping.get(str(record[id_col])) or {})]
+        redirects = resolve_redirects(wanted) if wanted else {}
+
     for record in tqdm(records, desc="Candidates"):
         key = str(record[id_col])
         current = mapping.get(key) or {}
-        reference = listed.get(record[id_col]) or listed.get(key) or {}
+        titles = _canonical_titles(reference_of(record), redirects)
 
         # Two reasons to ask: the article is missing or in a less-preferred language,
-        # or the chain and Wikipedia's own list name different English articles and
-        # neither is obviously right. The second costs no requests — a site already on
-        # English searches nothing, since no language would improve on it.
+        # or the chain and Wikipedia's own index name different English articles — once
+        # redirects are followed, which settles most of what looked like a disagreement.
+        # The second costs no requests: a site already on English searches nothing,
+        # since no language would improve on it.
         on_english = current.get("wiki_language") == "en"
-        disputed = bool(reference.get("title")) and (
-            _title_key(reference["title"]) != _title_key(current.get("wiki_title")))
+        disputed = bool(titles) and not _agrees(titles, current)
         if on_english and not disputed:
             continue
 
@@ -1287,8 +1396,7 @@ def build_review_queue(frame, mapping, listed=None, id_col="site_id", name_of=No
                 "score": round(title_similarity(name, current["wiki_title"]), 3),
                 "current": True,
             })
-        for listed_title in reference.get("titles") or ([reference["title"]]
-                                                       if reference.get("title") else []):
+        for listed_title in titles:
             candidates.append({
                 "wiki_title": listed_title, "wiki_language": "en",
                 "wiki_project": "en.wikipedia.org",
@@ -1314,14 +1422,13 @@ def build_review_queue(frame, mapping, listed=None, id_col="site_id", name_of=No
         if len(unique) < 2 and not any(not c.get("current") for c in unique):
             continue
 
-        best = unique[0]
-        if (adopt_sure and not disputed and best["score"] >= CANDIDATE_SURE_SCORE
-                and best["wiki_rank"] < article_rank(current.get("wiki_language"))):
-            entry = {k: v for k, v in best.items() if k != "score"}
-            entry["wikidata_url"] = current.get("wikidata_url")
-            mapping[key] = entry
+        chosen = (_auto_adoption(unique, disputed, current.get("wiki_language"))
+                  if adopt_sure else None)
+        if chosen:
+            mapping[key] = _adopted_entry(chosen, current.get("wikidata_url"))
             adopted.append({id_col: record[id_col], "label": record.get("label"),
-                            "took": best["wiki_title"], "score": best["score"]})
+                            "took": chosen["wiki_title"], "score": chosen["score"],
+                            "reason": chosen["reason"]})
             continue
 
         queue.append({
@@ -1329,9 +1436,94 @@ def build_review_queue(frame, mapping, listed=None, id_col="site_id", name_of=No
             "states": record.get("states"), "search_name": name,
             "current": {k: current.get(k) for k in
                         ("wiki_title", "wiki_language", "wiki_url")} if current else None,
-            "candidates": unique[:6],
+            "candidates": unique[:QUEUE_CANDIDATE_CAP],
+            "redirects_resolved": bool(redirects),
         })
     return queue, adopted
+
+
+def tighten_review_queue(queue, mapping, skip_ids=(), redirects=None, id_col="site_id"):
+    """Settle what a queue built before redirect resolution only looked disputed about.
+
+    Reads the candidates already stored and searches nothing; the one thing it asks for
+    is the redirect targets of the index's titles, about one request per fifty. Then,
+    per site:
+
+    - the index's article, once redirects are followed, is the one the API already has:
+      there was never a disagreement, so the site leaves the queue and the pick stays;
+    - the index links exactly one article and it outscores every other option
+      (`_auto_adoption`): it goes straight into `mapping`;
+    - anything else stays queued, now with canonical titles and fresh scores.
+
+    Sites in `skip_ids` — the ones already decided in the review page — are never
+    touched, so a hand-made choice cannot be overtaken by a rule. A queue keeps only
+    QUEUE_CANDIDATE_CAP candidates per site; one at the cap may have lost a second
+    listed article off the end, which would make a row linking several look like it
+    links one, so its adoption is left to review.
+
+    Returns (remaining, adopted, agreed).
+    """
+    skip_ids = {str(i) for i in skip_ids}
+    pending = [i for i in queue if str(i[id_col]) not in skip_ids
+               and not i.get("redirects_resolved")]
+    if redirects is None:
+        pairs = [("en", c["wiki_title"]) for i in pending for c in i["candidates"]
+                 if c["wiki_lookup_source"] == "wikipedia_list"]
+        redirects = resolve_redirects(pairs) if pairs else {}
+
+    remaining, adopted, agreed = [], [], []
+    for item in queue:
+        key = str(item[id_col])
+        if key in skip_ids or item.get("redirects_resolved"):
+            remaining.append(item)
+            continue
+
+        candidates = item["candidates"]
+        listed_c = [c for c in candidates if c["wiki_lookup_source"] == "wikipedia_list"]
+        if any(("en", c["wiki_title"]) not in redirects for c in listed_c):
+            remaining.append(item)           # a lookup failed: decide nothing, flag nothing
+            continue
+
+        name = item.get("search_name") or item.get("label")
+        canon = []
+        for c in listed_c:
+            target = redirects[("en", c["wiki_title"])]
+            if not target or any(_title_key(target) == _title_key(x["wiki_title"]) for x in canon):
+                continue
+            canon.append({**c, "wiki_title": target,
+                          "wiki_url": "https://en.wikipedia.org/wiki/"
+                                      + urllib.parse.quote(target.replace(" ", "_")),
+                          "score": round(title_similarity(name, target), 3)})
+
+        others = [c for c in candidates if c["wiki_lookup_source"] != "wikipedia_list"]
+        current = next((c for c in others if c.get("current")), None)
+        if current and _agrees([c["wiki_title"] for c in canon], current):
+            agreed.append({id_col: item[id_col], "label": item.get("label"),
+                           "pick": current["wiki_title"]})
+            continue
+
+        # a search hit on the very article the index names is the same candidate twice
+        titles = {_title_key(c["wiki_title"]) for c in canon}
+        others = [c for c in others
+                  if c.get("current") or not (c["wiki_language"] == "en"
+                                              and _title_key(c["wiki_title"]) in titles)]
+        ranked = sorted(others + canon, key=lambda c: (-c["score"], c["wiki_rank"]))
+
+        # disputed=True switches off the language-upgrade rule: a queued site was
+        # already refused by it when the queue was built.
+        chosen = (None if key in skip_ids or len(candidates) >= QUEUE_CANDIDATE_CAP
+                  or not ranked else _auto_adoption(ranked, True, None))
+        if chosen:
+            previous = mapping.get(key) or {}
+            mapping[key] = _adopted_entry(chosen, previous.get("wikidata_url"))
+            adopted.append({id_col: item[id_col], "label": item.get("label"),
+                            "was": (current or {}).get("wiki_title"),
+                            "took": chosen["wiki_title"], "score": chosen["score"],
+                            "reason": chosen["reason"]})
+            continue
+        remaining.append({**item, "candidates": ranked[:QUEUE_CANDIDATE_CAP],
+                          "redirects_resolved": True})
+    return remaining, adopted, agreed
 
 
 _CONTENT_WORD_RE = re.compile(r"[^\W\d_]{4,}", re.UNICODE)

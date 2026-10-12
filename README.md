@@ -190,7 +190,12 @@ Two kinds of case go into the review queue:
 - the article is **missing or not in English**, and a search of the preferred languages found something better. `CANDIDATE_LANGUAGES` defaults to English then French, so this costs one or two requests per site;
 - the chain and Wikipedia's list **name different English articles** and neither is clearly right. These cost nothing — a site already on English searches no language, because none would improve on it.
 
-A candidate whose title all but matches the site name in a better-ranked language is not in doubt (`CANDIDATE_SURE_SCORE`, 0.92), so it is adopted directly and merely reported.
+Two kinds of candidate are not in doubt, and are adopted directly and merely reported:
+
+- a title that all but matches the site name in a better-ranked language (`CANDIDATE_SURE_SCORE`, 0.92);
+- **the index's article, when its row links exactly one and it outscores every other option**, the API's pick included (floor `CANDIDATE_MIN_SCORE`, 0.45). A row linking several articles never qualifies, since the index itself has not decided between them. Sites already decided by hand in the review page are never touched by a rule.
+
+**Redirects are followed first.** The index writes each site's official name as a link, and that is very often a redirect to the article the API already found: `Changdeokgung Palace Complex` is `Changdeokgung`, `Kasbah of Algiers` is `Casbah of Algiers`. Compared as written they look like a disagreement; followed to their target they are the same page, so the site leaves the queue and the API's pick stands. In a sample of 22 replacements the score-based rule alone would have proposed, 17 were exactly this — it would have swapped good canonical titles for redirects. That is also most of why the first queue held 699 sites. And it matters beyond tidiness: pageviews are counted per requested title, so a site pointed at a redirect would be sized by the few readers who arrive through it. `resolve_redirects` batches fifty titles per request.
 
 **One article per site reaches the globe, and the review is where it is chosen.** The page puts the pipeline's own pick — what the API resolution found, marked *in use* — next to its challengers: the article Wikipedia's index names, and, for a pick that is not in English, what the language search returned. Nothing is exported but the winner; `sites.geojson` carries the same five `wiki_*` fields it always did.
 
