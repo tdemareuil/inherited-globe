@@ -2314,7 +2314,7 @@
             ` : '';
 
             const statesHtml = hasDisplayValue(states)
-                ? `<span style="color:rgba(255,255,255,0.78)">${escapeHtml(String(states))}</span><br>`
+                ? `<span style="color:rgba(255,255,255,0.78); overflow-wrap:anywhere">${escapeHtml(String(states))}</span><br>`
                 : '';
             const descriptionText = hasDisplayValue(short_description) ? stripTags(short_description) : '';
             const infoButtonHtml = descriptionText

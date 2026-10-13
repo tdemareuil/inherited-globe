@@ -13,6 +13,7 @@ compute from polygons.
 
 from __future__ import annotations
 
+import collections
 import datetime
 import difflib
 import html
@@ -290,6 +291,48 @@ def description_text(value):
 def to_bool(value):
     """The exports write booleans as True/False, Y/N or 1/0 depending on the column."""
     return clean_str(value).lower() in {"true", "y", "yes", "1"}
+
+
+def format_states(value):
+    """A list of countries with a space after each comma, so a browser can break the line.
+
+    The export writes "India,Japan,France,Belgium,Switzerland,Argentina,Germany" with none, and a
+    string with no break opportunity runs out of the popup it is printed in.
+    """
+    return re.sub(r"\s*,\s*", ", ", clean_str(value))
+
+
+def regions_from_points(frame, lat_col="lat", lon_col="lon", code_col="iso_codes",
+                        region_col="region", max_km=300, margin=2.0):
+    """UNESCO's region for each row, corrected only where it contradicts the point.
+
+    The export gives a property one region even when it spans several countries: Le Corbusier's
+    seven, from India to Argentina, are filed under Latin America and the Caribbean, so the
+    Latin America filter showed a label drawn in Switzerland. The export's region is kept. It is
+    replaced only when the label point plainly lies in another country: the country whose own
+    single-country properties are nearest to the point, within `max_km`, and at least `margin`
+    times nearer than the next candidate. That country's region is read from those same
+    single-country properties, where UNESCO is unambiguous (no country is filed in two regions).
+    A property whose point sits near a border stays as the export has it.
+    """
+    codes = frame[code_col].fillna("").map(lambda v: [c.strip() for c in str(v).split(",") if c.strip()])
+    votes, anchors = {}, {}
+    for idx in frame.index[codes.map(len) == 1]:
+        code = codes[idx][0]
+        votes.setdefault(code, collections.Counter())[frame.at[idx, region_col]] += 1
+        anchors.setdefault(code, []).append((frame.at[idx, lat_col], frame.at[idx, lon_col]))
+    country_region = {code: counter.most_common(1)[0][0] for code, counter in votes.items()}
+    out = frame[region_col].copy()
+    for idx in frame.index[codes.map(len) > 1]:
+        lat, lon = frame.at[idx, lat_col], frame.at[idx, lon_col]
+        ranked = sorted((min(haversine_km(lat, lon, a, b) for a, b in anchors[c]), c)
+                        for c in codes[idx] if c in anchors)
+        if not ranked or ranked[0][0] > max_km:
+            continue
+        if len(ranked) > 1 and ranked[1][0] < margin * ranked[0][0]:
+            continue
+        out.at[idx] = country_region[ranked[0][1]]
+    return out
 
 
 def parse_coordinates(value):
