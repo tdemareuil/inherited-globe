@@ -201,6 +201,16 @@ Two kinds of candidate are not in doubt, and are adopted directly and merely rep
 
 **Ranking the challengers where a row links several articles.** An index row often links one article per component: *Ancient Ksour of Ouadane, Chinguetti, Tichitt and Oualata* links `Ksar` and all four towns, and 153 rows are like it. Titles alone cannot separate those, so each candidate's opening paragraph is read against the site's own description from the export, and the overlap of their vocabularies ranks them — `description_match`, an overlap coefficient rather than a Jaccard, since the two texts are rarely the same length. The closest challenger is marked *suggested* in the review page, which is a hint, not a default: nothing changes until a row is picked.
 
+**What was then read by hand.** The rules settle the clear cases. Everything else in the queue was read case by case and decided, which left only the sites that were genuinely a coin toss: 20 in the queue, of which 15 were Thomas's own choices and 5 are open. The criteria, in this order:
+
+1. The right subject comes first. A neighbouring thing, a person, a list or a disambiguation page is never chosen, whatever its title scores.
+2. Then English over another edition. A broader or component article in English beats a dedicated one in German or Dutch, because the English one is what most readers can open and what pageviews are measured on.
+3. For a serial property, the first-named component or the place itself.
+4. A broad article that would be shared by two properties loses to a dedicated one.
+5. Where the property is essentially one famous object, that object's article is used over a property article few people read: Stonehenge, Mount Fuji, Machu Picchu.
+
+Every kept title is followed through redirects, and a good number of the API's picks turned out to be redirects themselves, to the article the index named (`Royal Capetian Fortresses of Languedoc` is `Cathar castles`). Two cases went wrong and were fixed: a redirect to a whole county (`Alba County`) and a pick that was a disambiguation page. The result is 1,271 sites with an article, 1,242 of them in English, and no article shared by two sites. The `adopted` list in the review cache records every change against what the API first returned.
+
 **The review page** is `scripts/article_review.py`: the standard library only, since the kernel has no ipywidgets, served from a background thread so the notebook stays usable while it is open. Each click writes straight to `data/cache/wikidata/article_decisions.json` — atomically, so closing the tab loses nothing — and the notebook applies the decisions in the following cell. The geoparks get the same queue, the same page on the next port, and their own decisions file.
 
 ### Channel 5 — Wikipedia lead images
