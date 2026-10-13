@@ -1243,6 +1243,92 @@ def search_name(label, max_chars=60):
     return short_label(label, max_chars) or clean_str(label)
 
 
+def probe_titles(titles, lang="en", batch_size=50):
+    """title -> {"status", "target"}: what one Wikipedia page name is, redirects followed.
+
+    status is `real` (an article of its own), `redirect` (forwards to `target`),
+    `disambiguation` or `missing`. Asking for a property's exact official name answers
+    the question the candidate list cannot: does an article about this very property
+    exist? If the name redirects to a city, no — the city is the specific article there
+    is. If it is a page of its own, the property has one.
+    """
+    out = {}
+    titles = list(dict.fromkeys(t for t in titles if clean_str(t)))
+    for start in tqdm(range(0, len(titles), batch_size), desc=f"Probe {lang}"):
+        chunk = titles[start:start + batch_size]
+        payload = _wikipedia_api(f"{lang}.wikipedia.org", {
+            "action": "query", "redirects": 1, "titles": "|".join(chunk),
+            "prop": "pageprops", "ppprop": "disambiguation",
+        }, label="probe")
+        query = (payload or {}).get("query")
+        if query is None:
+            continue
+        normalized = {n["from"]: n["to"] for n in query.get("normalized", [])}
+        hops = {r["from"]: r["to"] for r in query.get("redirects", [])}
+        pages = {page["title"]: page for page in (query.get("pages") or {}).values()}
+        for title in chunk:
+            target, hopped = normalized.get(title, title), False
+            for _ in range(5):
+                if target not in hops:
+                    break
+                target, hopped = hops[target], True
+            page = pages.get(target) or {}
+            if not page or "missing" in page:
+                status = "missing"
+            elif "disambiguation" in (page.get("pageprops") or {}):
+                status = "disambiguation"
+            else:
+                status = "redirect" if hopped else "real"
+            out[title] = {"status": status, "target": target}
+        time.sleep(SLEEP_WIKI)
+    return out
+
+
+def heritage_signal(titles, keywords=("World Heritage",), lang="en", batch_size=50,
+                    intro_words=("unesco",)):
+    """title -> True when the article says it is a UNESCO site.
+
+    Two readings of one fact: the article sits in a category naming one of `keywords`
+    (English editors file them under "World Heritage Sites in France"), or, failing that,
+    its opening paragraph mentions one of `intro_words` or the keywords. It separates the
+    article about the property from a namesake that merely shares the title.
+
+    For geoparks pass keywords=("Geopark",) and intro_words=(): a bare "UNESCO" in an
+    introduction would also validate a World Heritage town that merely hosts one.
+    """
+    titles = list(dict.fromkeys(titles))
+    wanted = tuple(k.casefold() for k in keywords)
+    found = {t: False for t in titles}
+    for start in tqdm(range(0, len(titles), batch_size), desc=f"Signal {lang}"):
+        chunk = titles[start:start + batch_size]
+        params = {"action": "query", "prop": "categories", "cllimit": "max",
+                  "titles": "|".join(chunk), "redirects": 1}
+        while True:
+            payload = _wikipedia_api(f"{lang}.wikipedia.org", params, label="signal")
+            query = (payload or {}).get("query") or {}
+            normalized = {n["to"]: n["from"] for n in query.get("normalized", [])}
+            for page in (query.get("pages") or {}).values():
+                name = normalized.get(page.get("title"), page.get("title"))
+                if any(any(w in c["title"].casefold() for w in wanted)
+                       for c in page.get("categories", [])):
+                    for t in chunk:
+                        if t == name or t.replace("_", " ") == name:
+                            found[t] = True
+            if "continue" not in (payload or {}):
+                break
+            params = {**params, **payload["continue"]}
+        time.sleep(SLEEP_WIKI)
+
+    # the rest: does the opening paragraph say so?
+    rest = [t for t in titles if not found[t]]
+    if rest:
+        extracts = fetch_extracts([(lang, t.replace("_", " ")) for t in rest])
+        for t in rest:
+            text = (extracts.get((lang, t.replace("_", " "))) or "").casefold()
+            found[t] = any(w in text for w in (*intro_words, *wanted))
+    return found
+
+
 QUEUE_CANDIDATE_CAP = 6   # candidates kept per site in the queue
 
 
