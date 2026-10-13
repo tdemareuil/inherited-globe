@@ -1417,6 +1417,14 @@
             starCount: 600,
             glowIntensity: 0   // kills the opaque blue fill blob
         });
+        // The plugin reads glowIntensity 0 as its default of 1, so the halo stays on;
+        // its colours are set here to match the globe's lavender.
+        starryBg.config.glowColors = {
+            inner: 'rgba(202, 175, 244, 0.9)',
+            middle: 'rgba(179, 139, 238, 0.7)',
+            outer: 'rgba(144, 85, 231, 0.4)',
+            fade: 'rgba(104, 31, 214, 0)'
+        };
 
         function capStarSizes() {
             if (!starryBg.stars || !starryBg.stars.length) return;
@@ -2008,9 +2016,9 @@
         }
 
         function paintGlobeStyleLayers() {
-            const ocean = '#17106f';
-            const land = '#3d38f0';
-            const boundary = '#9f83ef';
+            const ocean = '#442c6d';
+            const land = '#a585d6';
+            const boundary = '#d8c6f1';
 
             if (!map.getSource('globe-land')) {
                 map.addSource('globe-land', {
@@ -2061,7 +2069,7 @@
                 } else if (layer.type === 'line') {
                     const isBoundary = /boundary|admin|country|border/.test(layerKey);
                     try { map.setPaintProperty(layer.id, 'line-opacity', isBoundary ? 0.42 : 0.16); } catch (e) { }
-                    try { map.setPaintProperty(layer.id, 'line-color', isBoundary ? boundary : '#5c51c8'); } catch (e) { }
+                    try { map.setPaintProperty(layer.id, 'line-color', isBoundary ? boundary : '#8d74b4'); } catch (e) { }
                 } else if (layer.type === 'symbol') {
                     try { map.setLayoutProperty(layer.id, 'visibility', 'none'); } catch (e) { }
                 }
