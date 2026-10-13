@@ -13,6 +13,7 @@ compute from polygons.
 
 from __future__ import annotations
 
+import datetime
 import difflib
 import html
 import io
@@ -1896,6 +1897,88 @@ def recount_with_redirects(frame, counts, cache_path, floor=1, max_redirects=12,
         recovered += total > 0
     write_json_atomic(cache_path, counts)
     return recovered
+
+
+def article_creation_dates(articles, cache_path=None, workers=4):
+    """(project, title) -> the day the article's first revision was made, as YYYY-MM-DD.
+
+    One request per article, since MediaWiki only walks a page's history for a single page
+    at a time, so the lookups run a few at a time and are cached. A page that cannot be
+    found maps to an empty string.
+    """
+    cache = read_json_cache(cache_path) if cache_path else {}
+    pending = [pair for pair in dict.fromkeys(articles) if f"{pair[0]}|{pair[1]}" not in cache]
+
+    def first_revision(pair):
+        project, title = pair
+        payload = _wikipedia_api(project, {
+            "action": "query", "titles": str(title).replace("_", " "), "prop": "revisions",
+            "rvdir": "newer", "rvlimit": 1, "rvprop": "timestamp", "redirects": 1}, label="created")
+        pages = ((payload or {}).get("query") or {}).get("pages") or {}
+        revisions = (next(iter(pages.values()), {}).get("revisions") or [{}])
+        return f"{project}|{title}", (revisions[0].get("timestamp") or "")[:10]
+
+    if pending:
+        with futures.ThreadPoolExecutor(workers) as pool:
+            for key, day in tqdm(pool.map(first_revision, pending), total=len(pending), desc="Creation dates"):
+                cache[key] = day
+        if cache_path:
+            write_json_atomic(cache_path, cache)
+    return {tuple(key.split("|", 1)): day for key, day in cache.items()}
+
+
+def recount_young_articles(frame, counts, cache_path, creation_cache=None, floor=1, max_age_days=365,
+                           max_redirects=12, today=None, id_col="site_id"):
+    """An article at the floor that was written less than a year ago is counted over its whole life.
+
+    The standard window ends in May 2026, so an article written after that has none of its
+    readers in it. Only the articles still at `floor` are looked at, which keeps this to a
+    handful of lookups: their creation date is fetched, and those created within
+    `max_age_days` have their views summed from the month of creation to the latest complete
+    month, over the article and the titles that redirect to it. An article that old enough
+    to have a year of history but still shows nothing is left alone, because a total over
+    many years would not be comparable. The figure is a total over a shorter life rather than
+    a year; the window is recorded next to the count under a `#window` key. Returns how many
+    articles were recounted.
+    """
+    today = today or datetime.date.today()
+    end = (today.replace(day=1) - datetime.timedelta(days=1)).strftime("%Y%m%d")
+    cutoff = (today - datetime.timedelta(days=max_age_days)).isoformat()
+    rows = frame.drop_duplicates(id_col)
+    rows = rows[rows["wiki_title"].notna() & (rows["popularity"] <= floor)]
+    created = article_creation_dates(
+        rows[["wiki_project", "wiki_title"]].itertuples(index=False, name=None), creation_cache)
+    previous = (START, END)
+    recounted = 0
+    try:
+        for row in tqdm(rows.to_dict("records"), desc="Young articles"):
+            project, title = row["wiki_project"], row["wiki_title"]
+            day = created.get((project, title)) or ""
+            if not day or day < cutoff:
+                continue
+            start = day[:7].replace("-", "") + "01"
+            window = f"{start}-{end}"
+            key = f"{project}|{title}"
+            if counts.get(f"{key}#window") == window:
+                continue
+            set_pageview_window(start, end)
+            payload = _wikipedia_api(project, {
+                "action": "query", "titles": str(title).replace("_", " "), "prop": "redirects",
+                "rdlimit": max_redirects * 3, "rdnamespace": 0}, label="redirects")
+            pages = ((payload or {}).get("query") or {}).get("pages") or {}
+            page = next(iter(pages.values()), {})
+            names = [str(title)] + [r["title"] for r in page.get("redirects", [])][:max_redirects]
+            total = 0
+            for name in names:
+                total += get_pageviews(project, name)
+                time.sleep(SLEEP_PAGEVIEWS)
+            counts[key] = total
+            counts[f"{key}#window"] = window
+            recounted += 1
+    finally:
+        set_pageview_window(*previous)
+    write_json_atomic(cache_path, counts)
+    return recounted
 
 
 def fetch_pageviews(articles, counts, cache_path, desc="Pageviews"):
