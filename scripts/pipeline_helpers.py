@@ -1832,12 +1832,19 @@ def apply_listed_articles(mapping, conflicts, statuses=(), ids=(), id_col="site_
     return changed
 
 
+# Wikipedia hosts that are aliases: Norwegian Bokmål is written nb in the sitelinks and the
+# search results, but its pageviews are recorded under no. The pageview API knows only the
+# second, and answers "not found" to the first, which reads as zero views.
+PAGEVIEW_PROJECT_ALIASES = {"nb.wikipedia.org": "no.wikipedia.org"}
+
+
 def get_pageviews(project, title, retries=4):
     """Return total Wikipedia views over the configured window for one project/title."""
     if not clean_str(title):
         return 0
     encoded = urllib.parse.quote(str(title), safe="")
     project = project or "en.wikipedia.org"
+    project = PAGEVIEW_PROJECT_ALIASES.get(project, project)
     url = f"{PAGEVIEWS_BASE}/{project}/all-access/{PAGEVIEWS_AGENT}/{encoded}/monthly/{START}/{END}"
     for _ in range(retries):
         try:
