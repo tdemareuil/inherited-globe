@@ -229,7 +229,7 @@ Two requests per site, ~112 in total, cached in `data/cache/images/wikipedia_thu
 
 `image_source` records where a photo came from, `UNESCO` or `Wikipedia`.
 
-A lead image is often not a photograph of the place: a locator map, a satellite frame, a fossil in a museum, a railway station. The file name says so more reliably than anything else, so `vet_thumbnail` leaves out maps, flags, vector and PNG files and the like, and `THUMBNAIL_REJECTS` lists the few the name cannot give away (a museum lamp for the Kunlun Mountains, a mole species for the Funiu Mountains). Most captions turned out to be file names (`Sukur2`, `Wudalianchi1`), so a caption is kept only when it reads as a sentence. Of the 56 sites with no photo in their export, 37 now borrow one.
+A lead image is often not a photograph of the place: a locator map, a satellite frame, a fossil in a museum, a railway station. The file name says so more reliably than anything else, so `vet_thumbnail` leaves out maps, flags, vector and PNG files and the like, and `THUMBNAIL_REJECTS` lists the few the name cannot give away (a museum lamp for the Kunlun Mountains, a mole species for the Funiu Mountains). Most captions turned out to be file names (`Sukur2`, `Wudalianchi1`), so a caption is kept only when it reads as a sentence. Of the 56 sites with no photo in their export, 39 now borrow one (11 properties and 28 geoparks); the last 17 have no usable lead image.
 
 This channel needs Channel 3 — without a resolved article there is nothing to fall back to — so it runs after the two datasets are combined, at section 7.1 of the notebook.
 
