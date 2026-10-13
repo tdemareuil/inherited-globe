@@ -1309,11 +1309,14 @@ def _auto_adoption(candidates, disputed, current_language):
 
     Two rules, either of which settles a site:
 
-    - **sole listed winner.** Wikipedia's index links exactly one article for the row,
-      and that article scores strictly higher than everything else on offer, the API's
-      own pick included. This is the plain disagreement — the same subject under two
-      titles — rather than a real ambiguity. A row linking several articles never
-      qualifies, since the index itself has not decided between them.
+    - **sole listed winner.** The API's pick is in English, Wikipedia's index links
+      exactly one article for the row, and that article scores strictly higher than
+      everything else on offer, the pick included. This is the plain disagreement — two
+      English titles for one subject — rather than a real ambiguity. A row linking
+      several articles never qualifies, since the index itself has not decided between
+      them. A pick that is missing or in another language is never overruled this way:
+      scoring an English site name against a foreign title is unfair to the foreign one,
+      so `Bordeaux` would beat the French article on the port itself.
     - **language upgrade.** A pick that is not in English, whose best candidate all but
       matches the site name in a better-ranked language.
     """
@@ -1321,7 +1324,7 @@ def _auto_adoption(candidates, disputed, current_language):
     runner_up = candidates[1]["score"] if len(candidates) > 1 else -1.0
 
     listed = [c for c in candidates if c["wiki_lookup_source"] == "wikipedia_list"]
-    if (len(listed) == 1 and best is listed[0]
+    if (current_language == "en" and len(listed) == 1 and best is listed[0]
             and best["score"] >= CANDIDATE_MIN_SCORE and best["score"] > runner_up):
         return {**best, "reason": "sole_listed"}
 
@@ -1428,7 +1431,7 @@ def build_review_queue(frame, mapping, listed=None, id_col="site_id", name_of=No
             mapping[key] = _adopted_entry(chosen, current.get("wikidata_url"))
             adopted.append({id_col: record[id_col], "label": record.get("label"),
                             "took": chosen["wiki_title"], "score": chosen["score"],
-                            "reason": chosen["reason"]})
+                            "reason": chosen["reason"], "entry": mapping[key]})
             continue
 
         queue.append({
@@ -1511,17 +1514,22 @@ def tighten_review_queue(queue, mapping, skip_ids=(), redirects=None, id_col="si
 
         # disputed=True switches off the language-upgrade rule: a queued site was
         # already refused by it when the queue was built.
-        chosen = (None if key in skip_ids or len(candidates) >= QUEUE_CANDIDATE_CAP
-                  or not ranked else _auto_adoption(ranked, True, None))
+        chosen = (None if len(candidates) >= QUEUE_CANDIDATE_CAP or not ranked
+                  else _auto_adoption(ranked, True, (current or {}).get("wiki_language")))
         if chosen:
             previous = mapping.get(key) or {}
             mapping[key] = _adopted_entry(chosen, previous.get("wikidata_url"))
             adopted.append({id_col: item[id_col], "label": item.get("label"),
                             "was": (current or {}).get("wiki_title"),
                             "took": chosen["wiki_title"], "score": chosen["score"],
-                            "reason": chosen["reason"]})
+                            "reason": chosen["reason"], "entry": mapping[key]})
             continue
+        challengers = sorted((c for c in ranked if not c.get("current")),
+                             key=lambda c: -c.get("text_score", 0))
         remaining.append({**item, "candidates": ranked[:QUEUE_CANDIDATE_CAP],
+                          "suggested": (challengers[0]["wiki_url"]
+                                        if challengers and challengers[0].get("text_score")
+                                        else None),
                           "redirects_resolved": True})
     return remaining, adopted, agreed
 
