@@ -286,6 +286,11 @@ def description_text(value):
     return _GLUED_SENTENCE_RE.sub(r"\1\2 \3", strip_tags(value))
 
 
+def to_bool(value):
+    """The exports write booleans as True/False, Y/N or 1/0 depending on the column."""
+    return clean_str(value).lower() in {"true", "y", "yes", "1"}
+
+
 def parse_coordinates(value):
     """Parse the export's 'Coordonnées' field ('lat, lon') into a (lat, lon) tuple.
 
@@ -1854,6 +1859,45 @@ def get_pageviews(project, title, retries=4):
     return 0
 
 
+def recount_with_redirects(frame, counts, cache_path, floor=1, max_redirects=12, id_col="site_id"):
+    """For articles showing no views, also count the titles that redirect to them.
+
+    Pageviews are recorded under the title a reader asked for. An article whose readers
+    arrive through a redirect shows almost nothing under its own title: Paphos is read as
+    "Paphos Archaeological Park", 19,000 views a year, which redirects to "Nea Paphos
+    (ancient city)", which has none. Following redirects to the canonical article, as the
+    resolution does, therefore loses exactly those readers.
+
+    Only articles at `floor` are looked at, since for an ordinary article the redirects add
+    little (a few percent on a sample) and checking all of them would take an hour of
+    requests. The total goes into `counts` under the canonical key, and a `#redirects` key
+    records that the article was checked. Returns how many articles recovered some views.
+    """
+    rows = frame.drop_duplicates(id_col)
+    rows = rows[rows["wiki_title"].notna() & (rows["popularity"] <= floor)]
+    recovered = 0
+    for row in tqdm(rows.to_dict("records"), desc="Redirect recount"):
+        project, title = row["wiki_project"], row["wiki_title"]
+        key = f"{project}|{title}"
+        if f"{key}#redirects" in counts:
+            continue
+        payload = _wikipedia_api(project, {
+            "action": "query", "titles": str(title).replace("_", " "), "prop": "redirects",
+            "rdlimit": max_redirects * 3, "rdnamespace": 0}, label="redirects")
+        pages = ((payload or {}).get("query") or {}).get("pages") or {}
+        page = next(iter(pages.values()), {})
+        names = [r["title"] for r in page.get("redirects", [])][:max_redirects]
+        total = int(counts.get(key, 0))
+        for name in names:
+            total += get_pageviews(project, name)
+            time.sleep(SLEEP_PAGEVIEWS)
+        counts[key] = total
+        counts[f"{key}#redirects"] = len(names)
+        recovered += total > 0
+    write_json_atomic(cache_path, counts)
+    return recovered
+
+
 def fetch_pageviews(articles, counts, cache_path, desc="Pageviews"):
     """Fill `counts` with the view total for every (project, title) it is missing.
 
@@ -1922,6 +1966,37 @@ def _wikipedia_api(project, params, retries=3, label="wikipedia"):
     return None
 
 
+# A lead image is often not a photograph of the place: a locator map, a flag, a satellite
+# frame, an artefact in a museum. The file name says so more reliably than anything else.
+_NOT_A_PHOTO = re.compile(
+    r"(\w*kort|\bmap|\bmaps|\bkarte|\bkaart|\bmapa|\bcarte|\blocation|locator|locatie|plan|diagram|chart|flag|"
+    r"coat[_ ]of[_ ]arms|logo|seal|emblem|railway|station|holotype|fossil|specimen|ISS\d+|"
+    r"satellite|landsat|aerial[_ ]view[_ ]of[_ ]china)\b|\.svg|\.png|\.gif|\.tiff?", re.I)
+_FILE_LIKE_CAPTION = re.compile(
+    r"(panoramio|flickr|\bIMG|\bDSC|\bP\d{6}|\(\d{5,}\)|_|\.jpe?g|\s-\s\d+$|\d$|\(\d\)$)", re.I)
+
+
+def vet_thumbnail(record):
+    """Drop a lead image that is not a photograph of the site, and a caption that is a file name.
+
+    Returns a copy. A rejected image keeps `image_rejected` with the reason, so a re-run
+    does not ask again and the notebook can say what it left out.
+    """
+    if not record or not record.get("image_url"):
+        return record or {}
+    record = dict(record)
+    name = urllib.parse.unquote(record["image_url"].rsplit("/", 1)[-1])
+    # underscores and hyphens count as word characters in a regex; turn them into spaces
+    label = re.sub(r"[_\-]+", " ", f"{record.get('image_file') or ''} {name}")
+    if _NOT_A_PHOTO.search(label):
+        return {"image_rejected": label.strip(), "image_article": record.get("image_article")}
+    caption = clean_str(record.get("image_caption"))
+    words = caption.split()
+    if len(words) < 3 or _FILE_LIKE_CAPTION.search(caption):
+        record["image_caption"] = None
+    return record
+
+
 def wikipedia_thumbnail(project, title, width=None, retries=3):
     """Return the article's lead photo and its credit, or None if it has no image.
 
@@ -1975,7 +2050,7 @@ def wikipedia_thumbnail(project, title, width=None, retries=3):
         record["image_copyright"] = field("LicenseShortName") or None
         caption = field("ObjectName")
         record["image_caption"] = caption if 0 < len(caption) <= 120 else None
-    return record
+    return vet_thumbnail(record)
 
 
 def fetch_wikipedia_thumbnails(sites, cache_path=None, width=None):
@@ -1984,7 +2059,8 @@ def fetch_wikipedia_thumbnails(sites, cache_path=None, width=None):
     A site whose article has no image is cached as an empty record, so a re-run does
     not ask again. Returns the full cache, keyed by site id.
     """
-    thumbnails = read_json_cache(cache_path) if cache_path else {}
+    thumbnails = {k: vet_thumbnail(v) for k, v in
+                  (read_json_cache(cache_path).items() if cache_path else [])}
     pending = [(str(key), project, title) for key, project, title in sites
                if str(key) not in thumbnails]
     print(f"looking up {len(pending):,} article lead photos")

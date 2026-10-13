@@ -153,6 +153,8 @@ Save the file however api.wikimedia.org gives it to you. The portal hands you a 
 
 The pageviews endpoint is IP-limited and does not honour the token, so that stage stays paced at roughly one request per second either way.
 
+**Views are counted under the title a reader asked for.** An article reached mostly through a redirect shows almost nothing under its own title. Paphos is read as *Paphos Archaeological Park*, 19,000 views a year, which redirects to *Nea Paphos (ancient city)*, which has none, and the 20th-century architecture of Frank Lloyd Wright has 23,000 under a title with a leading "The". Following redirects to the canonical article, as the resolution does, loses exactly those readers. The articles still at the floor after the count therefore have the titles that redirect to them counted too (`RUN_REDIRECT_RECOUNT`, about a hundred requests). Only the floor is checked: on a sample of ordinary articles the redirects added a few percent, which does not justify an hour of requests. An article created after the end of the window has no views to count and stays at the floor: the 2026 inscriptions, and a few property articles written in July and August 2026.
+
 ### Cross-check against Wikipedia's own lists
 
 The resolution chain in Channel 3 works one item at a time, so a site whose Wikidata entry carries no `P757` or no English sitelink falls through it even when a perfectly good English article exists. Wikipedia's own curated lists catch exactly that, and the pipeline reads them as **wikitext rather than rendered HTML** — templates stay unexpanded, which keeps the several hundred navbox links on a country page out of what gets parsed.
@@ -225,6 +227,8 @@ Two requests per site, ~112 in total, cached in `data/cache/images/wikipedia_thu
 
 `image_source` records where a photo came from, `UNESCO` or `Wikipedia`.
 
+A lead image is often not a photograph of the place: a locator map, a satellite frame, a fossil in a museum, a railway station. The file name says so more reliably than anything else, so `vet_thumbnail` leaves out maps, flags, vector and PNG files and the like, and `THUMBNAIL_REJECTS` lists the few the name cannot give away (a museum lamp for the Kunlun Mountains, a mole species for the Funiu Mountains). Most captions turned out to be file names (`Sukur2`, `Wudalianchi1`), so a caption is kept only when it reads as a sentence. Of the 56 sites with no photo in their export, 36 now borrow one.
+
 This channel needs Channel 3 — without a resolved article there is nothing to fall back to — so it runs after the two datasets are combined, at section 7.1 of the notebook.
 
 ---
@@ -258,7 +262,7 @@ For each property:
 4. Carry `Main Image Author`, `Main Image Copyright` and `Main Image Caption EN` through as `image_author`, `image_copyright` and `image_caption`. All three describe the main photo only — the export publishes no per-photo metadata for the gallery — so they are cleared for the 12 properties with no main photo, which Step 4 then fills from Wikipedia with that photo's own credit.
 5. Store `image_url`, `extra_image_urls`, `image_count` and the popularity score.
 
-Every external call is cached on disk under `data/cache/` (git-ignored), keyed by article or site, so an interrupted run resumes instead of restarting. Checkpoints after parsing, after Wikidata and after pageviews let any stage be re-entered independently.
+Every external call is cached on disk under `data/cache/` (git-ignored), keyed by article or site, so an interrupted run resumes instead of restarting. Four checkpoints (label points, Wikidata, pageviews, geoparks) let a run resume without redoing what is above them: set `RESUME_FROM` to 1, 2, 3 or 4 in the configuration cell, run the dependencies and configuration cells, then run from that checkpoint's cell down. Each one was tested by restarting from it and comparing the export, which came out identical to the full run for all 1,514 features. A checkpoint is only as current as the run that wrote it, so a restart reads whatever the stages above it last produced.
 
 Image sources, in slide order:
 
@@ -433,6 +437,7 @@ Run the cells top to bottom. The configuration cell holds every knob; the six `R
 | `RUN_GEOPARK_PAGEVIEWS` | 12-month view counts for the geoparks | ~1 req/s per unique article (~4 min) |
 | `RUN_ARTICLE_CROSSCHECK` | read Wikipedia's own list pages and compare | 7 page fetches, seconds |
 | `RUN_ARTICLE_CANDIDATES` | search for better articles, and read each against the site's description | 1-2 requests per doubtful site, plus extracts in batches of 20 |
+| `RUN_REDIRECT_RECOUNT` | count the redirect titles of articles that show no views | about 100 requests, ~2 min |
 | `RUN_WIKIPEDIA_THUMBNAILS` | lead image for the sites whose export has none | 2 requests per site, 56 sites, ~1 min |
 | `RUN_PROXY_CHECK` | one `HEAD` per main photo through the resizing proxy | 1,458 requests, 8 at a time, ~6 min, cached |
 | `RUN_LOCAL_REDUCTION` | download and shrink whatever the proxy refuses | 7 photos, ~300 MB, ~10 min |
